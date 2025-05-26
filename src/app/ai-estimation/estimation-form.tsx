@@ -21,6 +21,7 @@ import { type EstimateAlgorithmPerformanceInput, type EstimateAlgorithmPerforman
 import { runEstimateAlgorithmPerformance } from "./actions";
 import { AlertCircle, CheckCircle2, Lightbulb, Cpu } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import Image from "next/image";
 
 const formSchema = z.object({
   algorithmName: z.string().min(2, {
