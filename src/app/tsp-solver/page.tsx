@@ -32,7 +32,7 @@ const tspInstances = [
 
 // Function to parse TSPLIB text data
 function parseTSPLIB(textData: string, instanceName: string): City[] {
-  const lines = textData.split('\\n');
+  const lines = textData.split('\n'); // Corrected line splitting
   const cities: City[] = [];
   let readingCoords = false;
 
@@ -61,7 +61,8 @@ function parseTSPLIB(textData: string, instanceName: string): City[] {
       // This is a simplified parser, production use might need more robust TSPLIB parsing
       for (const line of lines) {
         const trimmedLine = line.trim();
-        if (trimmedLine.startsWith('EOF') || trimmedLine.startsWith('TOUR_SECTION') || trimmedLine.match(/^[A-Z_]+:/i)) continue; // Skip headers or specific sections
+        // Skip headers or specific sections or empty lines
+        if (trimmedLine.startsWith('EOF') || trimmedLine.startsWith('TOUR_SECTION') || trimmedLine.match(/^[A-Z_]+:/i) || trimmedLine === "") continue;
          const parts = trimmedLine.split(/\s+/);
          if (parts.length >= 3) {
             const id = parts[0];
@@ -350,3 +351,5 @@ EOF"
     </div>
   );
 }
+
+    
