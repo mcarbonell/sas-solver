@@ -54,11 +54,15 @@ const tspInstances = [
   { id: "att48.tsp", name: "att48.tsp (48 cities)" },
   { id: "berlin52.tsp", name: "berlin52.tsp (52 cities)" },
   { id: "eil51.tsp", name: "eil51.tsp (51 cities)" },
+  { id: "st70.tsp", name: "st70.tsp (70 cities)" },
+  { id: "pr76.tsp", name: "pr76.tsp (76 cities)" },
   { id: "eil76.tsp", name: "eil76.tsp (76 cities)" },
   { id: "kroA100.tsp", name: "kroA100.tsp (100 cities)" },
   { id: "lin105.tsp", name: "lin105.tsp (105 cities)" },
-  { id: "pr76.tsp", name: "pr76.tsp (76 cities)" },
-  { id: "st70.tsp", name: "st70.tsp (70 cities)" },
+  { id: "ch130.tsp", name: "ch130.tsp (130 cities)" },
+  { id: "ch150.tsp", name: "ch150.tsp (150 cities)" },
+  { id: "d198.tsp", name: "d198.tsp (198 cities)" },
+  { id: "kroA200.tsp", name: "kroA200.tsp (200 cities)" },
   { id: "a280.tsp", name: "a280.tsp (280 cities)" },
   { id: "custom", name: "Custom Input" },
 ];
@@ -784,7 +788,7 @@ export default function TspSolverPage() {
                       <h4 className="text-xs font-medium text-muted-foreground">Avg Time/Run</h4>
                       <p className="text-lg font-bold">{formatTime(aggregatedBatchStats.avgTimePerRun)}</p>
                     </div>
-                    <div className="p-3 border rounded-md bg-muted/20">
+                     <div className="p-3 border rounded-md bg-muted/20">
                       <h4 className="text-xs font-medium text-muted-foreground">Total Batch Time</h4>
                       <p className="text-lg font-bold">{formatTime(aggregatedBatchStats.totalBatchTime)}</p>
                     </div>
