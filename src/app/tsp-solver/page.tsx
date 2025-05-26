@@ -7,13 +7,26 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Waypoints, PlayCircle, Settings, Clock, Route } from "lucide-react";
+import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, XCircle, PauseCircle } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 
 interface City {
   id: string | number;
   x: number;
   y: number;
+}
+
+interface CityPoint { // For worker
+  x: number;
+  y: number;
+}
+
+interface SolverStats {
+  iteration: number;
+  improvements: number;
+  currentK: number;
+  bestDistance: number;
+  bestPossibleDistance?: number;
 }
 
 // TSP instances for the dropdown, names include .tsp extension for fetching
@@ -32,7 +45,7 @@ const tspInstances = [
 
 // Function to parse TSPLIB text data
 function parseTSPLIB(textData: string, instanceName: string): City[] {
-  const lines = textData.split('\n'); // Corrected line splitting
+  const lines = textData.split('\n');
   const cities: City[] = [];
   let readingCoords = false;
 
@@ -43,7 +56,7 @@ function parseTSPLIB(textData: string, instanceName: string): City[] {
     if (readingCoords) {
       const parts = trimmedLine.split(/\s+/);
       if (parts.length >= 3) {
-        const id = parts[0]; // Keep as string or number based on input
+        const id = parts[0]; 
         const x = parseFloat(parts[1]);
         const y = parseFloat(parts[2]);
         if (!isNaN(x) && !isNaN(y)) {
@@ -57,11 +70,8 @@ function parseTSPLIB(textData: string, instanceName: string): City[] {
     }
   }
   if (cities.length === 0 && readingCoords === false && instanceName !== "Custom Input") {
-      // Fallback for files that might just list coordinates without a section header
-      // This is a simplified parser, production use might need more robust TSPLIB parsing
       for (const line of lines) {
         const trimmedLine = line.trim();
-        // Skip headers or specific sections or empty lines
         if (trimmedLine.startsWith('EOF') || trimmedLine.startsWith('TOUR_SECTION') || trimmedLine.match(/^[A-Z_]+:/i) || trimmedLine === "") continue;
          const parts = trimmedLine.split(/\s+/);
          if (parts.length >= 3) {
@@ -71,7 +81,7 @@ function parseTSPLIB(textData: string, instanceName: string): City[] {
             if (!isNaN(x) && !isNaN(y)) {
                 cities.push({ id, x, y });
             }
-         } else if (parts.length === 2) { // Sometimes ID is implicit
+         } else if (parts.length === 2) { 
             const x = parseFloat(parts[0]);
             const y = parseFloat(parts[1]);
             if (!isNaN(x) && !isNaN(y)) {
@@ -87,20 +97,40 @@ function parseTSPLIB(textData: string, instanceName: string): City[] {
 export default function TspSolverPage() {
   const [selectedInstance, setSelectedInstance] = useState<string | undefined>(undefined);
   const [customInstanceData, setCustomInstanceData] = useState("");
-  const [isRunning, setIsRunning] = useState(false);
-  const [results, setResults] = useState<{ time: string; pathLength: number; pathImage?: string } | null>(null);
+  const [isLoadingData, setIsLoadingData] = useState(false);
+  const [isSolverRunning, setIsSolverRunning] = useState(false);
+  
   const [cities, setCities] = useState<City[]>([]);
+  const [bestRoute, setBestRoute] = useState<number[]>([]);
+  const [solverStats, setSolverStats] = useState<SolverStats>({
+    iteration: 0,
+    improvements: 0,
+    currentK: 0,
+    bestDistance: Infinity,
+  });
+
+  const [maxK, setMaxK] = useState(3);
+  const [maxCitiesRegion, setMaxCitiesRegion] = useState(30); // For future parallel use
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const workerRef = useRef<Worker | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const loadInstance = async () => {
       setErrorMessage(null);
-      setCities([]); // Clear previous cities
+      setCities([]); 
+      setBestRoute([]);
+      setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
+      if (workerRef.current) { // Stop any existing worker if instance changes
+        workerRef.current.terminate();
+        workerRef.current = null;
+        setIsSolverRunning(false);
+      }
+
       if (selectedInstance && selectedInstance !== "custom") {
-        setIsRunning(true); // Indicate loading
+        setIsLoadingData(true); 
         try {
-          // Fetch from the new API route
           const response = await fetch(`/api/tsp-instance?name=${selectedInstance}`);
           if (!response.ok) {
              const errorData = await response.json().catch(() => ({error: `Failed to fetch TSP instance: ${selectedInstance} (status: ${response.status})`}));
@@ -117,10 +147,10 @@ export default function TspSolverPage() {
           setCities([]);
           setErrorMessage(error.message || "Could not load or parse TSP file.");
         } finally {
-          setIsRunning(false);
+          setIsLoadingData(false);
         }
       } else if (selectedInstance === "custom" && customInstanceData) {
-        setIsRunning(true);
+        setIsLoadingData(true);
         try {
           const parsedCities = parseTSPLIB(customInstanceData, "Custom Input");
            if (parsedCities.length === 0 && customInstanceData.trim() !== "") {
@@ -132,11 +162,10 @@ export default function TspSolverPage() {
           setCities([]);
           setErrorMessage(error.message || "Could not parse custom TSP data.");
         } finally {
-          setIsRunning(false);
+          setIsLoadingData(false);
         }
       } else {
-        // No instance selected or custom data not provided
-        setIsRunning(false); // Ensure loading indicator is off
+        setIsLoadingData(false);
       }
     };
     loadInstance();
@@ -151,7 +180,7 @@ export default function TspSolverPage() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (cities.length === 0) {
-      return; // Don't draw if no cities
+      return; 
     }
 
     const padding = 20;
@@ -165,7 +194,6 @@ export default function TspSolverPage() {
     let minY = Math.min(...cityCoords.map(p => p.y));
     let maxY = Math.max(...cityCoords.map(p => p.y));
 
-    // Handle case of single city to prevent division by zero
     if (cities.length === 1) {
       minX -= 1; maxX += 1;
       minY -= 1; maxY += 1;
@@ -181,37 +209,132 @@ export default function TspSolverPage() {
     const scaleY = drawableHeight / effectiveRangeY;
     const scale = Math.min(scaleX, scaleY);
 
-    ctx.fillStyle = 'hsl(var(--primary))'; // Use themed color
-
+    function getCanvasCoords(city: City | CityPoint) {
+        let canvasX = padding + (city.x - minX) * scale;
+        let canvasY = canvas!.height - padding - (city.y - minY) * scale;
+        if (rangeX === 0) canvasX = canvas!.width / 2;
+        if (rangeY === 0) canvasY = canvas!.height / 2;
+        return { x: canvasX, y: canvasY };
+    }
+    
+    // Draw cities
+    ctx.fillStyle = 'hsl(var(--primary))'; 
     cities.forEach((city) => {
-      let canvasX = padding + (city.x - minX) * scale;
-      // TSPLIB Y often assumes origin at bottom-left, canvas is top-left
-      let canvasY = canvas.height - padding - (city.y - minY) * scale;
-
-       // If all points are on a line (or single point), center them within the drawing area
-      if (rangeX === 0) canvasX = canvas.width / 2;
-      if (rangeY === 0) canvasY = canvas.height / 2;
-
+      const { x: canvasX, y: canvasY } = getCanvasCoords(city);
       ctx.beginPath();
       ctx.arc(canvasX, canvasY, 3, 0, 2 * Math.PI);
       ctx.fill();
     });
 
-  }, [cities]); // Redraw when cities data changes
+    // Draw best route
+    if (bestRoute.length > 0 && cities.length > 0) {
+        ctx.beginPath();
+        const startPoint = getCanvasCoords(cities[bestRoute[0]]);
+        ctx.moveTo(startPoint.x, startPoint.y);
+        for (let i = 1; i < bestRoute.length; i++) {
+            const point = getCanvasCoords(cities[bestRoute[i]]);
+            ctx.lineTo(point.x, point.y);
+        }
+        // Close the path by drawing a line back to the start city if it's a TSP tour
+        // The worker sends route including the return to start, so this might double draw the last segment or be okay.
+        // For now, let's assume worker sends N points for N cities, and we close it.
+        // If worker sends N+1 points (start city repeated at end), then this line is not strictly needed.
+        // ksolver3.html drawRoute: for (let i = 1; i < route.length; i++) ctx.lineTo... then ctx.lineTo(cities[route[0]])
+        // This implies worker returns N points, and drawing connects back to start.
+        // The worker's calculateDistance: totalDistance = distances[route[route.length-1]][route[0]];
+        // This confirms the worker's route array is N elements long, and does not repeat start city at the end.
+        ctx.lineTo(startPoint.x, startPoint.y); 
+        ctx.strokeStyle = 'hsl(var(--accent))';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+  }, [cities, bestRoute]); 
 
   const handleRunSolver = () => {
-    // Solver logic will be implemented in a future step
-    setIsRunning(true);
-    setResults(null);
-    setTimeout(() => {
-      setIsRunning(false);
-      setResults({
-        time: (Math.random() * 10 + 1).toFixed(2) + "s",
-        pathLength: Math.floor(Math.random() * 500 + 200),
-        // pathImage will be replaced by drawing on canvas
-      });
-    }, 2000);
+    if (isSolverRunning || cities.length === 0) return;
+
+    setIsSolverRunning(true);
+    setErrorMessage(null);
+    setBestRoute([]); // Clear previous route
+    setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
+
+
+    // Ensure worker is terminated if it exists, before creating a new one
+    if (workerRef.current) {
+        workerRef.current.terminate();
+    }
+    
+    workerRef.current = new Worker('/solve-worker.js'); // Worker from public folder
+
+    workerRef.current.onmessage = (e) => {
+      const { type, iteration, improvements, bestDistance, currentK, route, distance, id } = e.data;
+      
+      if (type === 'stats' || type === 'improvement' || type === 'solution') {
+        setSolverStats(prevStats => ({
+          ...prevStats,
+          iteration: iteration !== undefined ? iteration : prevStats.iteration,
+          improvements: improvements !== undefined ? improvements : prevStats.improvements,
+          currentK: currentK !== undefined ? currentK : prevStats.currentK,
+          bestDistance: distance !== undefined ? distance : (bestDistance !== undefined ? bestDistance : prevStats.bestDistance)
+        }));
+
+        if (route) {
+          setBestRoute(route);
+        }
+      }
+      
+      if (type === 'solution') {
+        console.log("Solver finished", e.data);
+        setIsSolverRunning(false);
+        if (workerRef.current) {
+          workerRef.current.terminate();
+          workerRef.current = null;
+        }
+      }
+    };
+
+    workerRef.current.onerror = (error) => {
+      console.error("Worker error:", error);
+      setErrorMessage("An error occurred in the solver worker.");
+      setIsSolverRunning(false);
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+    };
+    
+    const citiesForWorker: CityPoint[] = cities.map(c => ({ x: c.x, y: c.y }));
+
+    workerRef.current.postMessage({
+      type: 'start',
+      cities: citiesForWorker,
+      id: 'GLOBAL', // Or derive from instance name
+      maxK: maxK,
+      debug: false // Add a debug checkbox later if needed
+    });
   };
+
+  const handleStopSolver = () => {
+    if (workerRef.current) {
+      workerRef.current.postMessage({ type: 'stop' }); // Graceful stop if implemented in worker
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+    setIsSolverRunning(false);
+    // Optionally, keep current stats and route, or clear them. For now, keep.
+  };
+  
+  // Cleanup worker on component unmount
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+    };
+  }, []);
+
 
   return (
     <div className="container mx-auto py-8 px-4 md:px-6">
@@ -235,7 +358,7 @@ export default function TspSolverPage() {
           <CardContent className="space-y-6">
             <div>
               <Label htmlFor="tsp-instance" className="text-base">TSP Instance</Label>
-              <Select value={selectedInstance} onValueChange={setSelectedInstance}>
+              <Select value={selectedInstance} onValueChange={setSelectedInstance} disabled={isSolverRunning || isLoadingData}>
                 <SelectTrigger id="tsp-instance">
                   <SelectValue placeholder="Select an instance" />
                 </SelectTrigger>
@@ -251,7 +374,7 @@ export default function TspSolverPage() {
 
             {selectedInstance === "custom" && (
               <div>
-                <Label htmlFor="custom-data" className="text-base">Custom Instance Data (e.g., TSPLIB format)</Label>
+                <Label htmlFor="custom-data" className="text-base">Custom Instance Data (TSPLIB format)</Label>
                 <Textarea
                   id="custom-data"
                   placeholder="Paste your TSPLIB data here... e.g.,
@@ -263,57 +386,62 @@ EOF"
                   value={customInstanceData}
                   onChange={(e) => setCustomInstanceData(e.target.value)}
                   rows={8}
+                  disabled={isSolverRunning || isLoadingData}
                 />
               </div>
             )}
 
             <div>
-              <Label htmlFor="iterations" className="text-base">Max K (Systematic Alternatives)</Label>
-              <Input id="iterations" type="number" defaultValue={3} placeholder="e.g., 3" />
+              <Label htmlFor="maxK" className="text-base">Max K (Systematic Alternatives)</Label>
+              <Input id="maxK" type="number" value={maxK} onChange={e => setMaxK(parseInt(e.target.value,10) || 0)} placeholder="e.g., 3" disabled={isSolverRunning}/>
             </div>
              <div>
               <Label htmlFor="maxCitiesRegion" className="text-base">Max Cities Per Region (Parallel)</Label>
-              <Input id="maxCitiesRegion" type="number" defaultValue={30} placeholder="e.g., 30" />
+              <Input id="maxCitiesRegion" type="number" value={maxCitiesRegion} onChange={e => setMaxCitiesRegion(parseInt(e.target.value,10) || 0)} placeholder="e.g., 30" disabled={isSolverRunning} title="For future parallel implementation"/>
             </div>
 
 
-            <Button onClick={handleRunSolver} disabled={isRunning || (!selectedInstance && !customInstanceData) || (selectedInstance === "custom" && !customInstanceData) } className="w-full text-lg py-6">
-              <PlayCircle className="mr-2 h-6 w-6" />
-              {isRunning && cities.length === 0 && !errorMessage ? "Loading Data..." : isRunning ? "Running Solver..." : "Run SAS Solver"}
+            <Button 
+              onClick={isSolverRunning ? handleStopSolver : handleRunSolver} 
+              disabled={isLoadingData || (!selectedInstance && !customInstanceData) || (selectedInstance === "custom" && !customInstanceData.trim()) || (cities.length === 0 && !isLoadingData)} 
+              className="w-full text-lg py-6"
+            >
+              {isSolverRunning ? <PauseCircle className="mr-2 h-6 w-6" /> : <PlayCircle className="mr-2 h-6 w-6" />}
+              {isLoadingData ? "Loading Data..." : isSolverRunning ? "Stop Solver" : "Run SAS Solver"}
             </Button>
           </CardContent>
         </Card>
 
         <div className="lg:col-span-2">
-          <Card className="shadow-lg min-h-[400px]">
+          <Card className="shadow-lg min-h-[500px]"> {/* Increased min-height */}
             <CardHeader>
               <CardTitle className="text-2xl">Solution Visualization & Results</CardTitle>
               <CardDescription>
-                {results ? "The optimal path found by SAS and performance metrics." : cities.length > 0 ? "TSP instance cities." : "Awaiting data or selection."}
+                {solverStats.bestDistance !== Infinity ? `Best path length: ${solverStats.bestDistance.toFixed(2)}` : cities.length > 0 ? "TSP instance cities. Ready to solve." : "Awaiting data or selection."}
               </CardDescription>
             </CardHeader>
             <CardContent>
               {errorMessage && (
-                <div className="text-red-500 p-4 border border-red-500 rounded-md bg-destructive/10">
+                <div className="text-red-500 p-4 border border-red-500 rounded-md bg-destructive/10 mb-4">
                   <p><strong>Error:</strong> {errorMessage}</p>
                 </div>
               )}
-              {(isRunning && cities.length === 0 && !errorMessage) && ( // Loading state
+              {(isLoadingData) && ( 
                 <div className="flex flex-col items-center justify-center h-64">
-                  <PlayCircle className="h-16 w-16 text-primary animate-spin mb-4" />
+                  <Waypoints className="h-16 w-16 text-primary animate-pulse mb-4" />
                   <p className="text-muted-foreground text-lg">Loading instance data...</p>
                 </div>
               )}
-              {(!isRunning || cities.length > 0) && !errorMessage && (
+              {(!isLoadingData || cities.length > 0) && !errorMessage && (
                 <canvas
                   ref={canvasRef}
                   width={600}
                   height={400}
-                  className="rounded-lg border shadow-md bg-card" // Added bg-card for better visibility if no drawing
+                  className="rounded-lg border shadow-md bg-card mb-4" 
                   data-ai-hint="map path points"
                 />
               )}
-              {!isRunning && cities.length === 0 && !selectedInstance && !customInstanceData && !errorMessage && (
+              {!isLoadingData && cities.length === 0 && !selectedInstance && !customInstanceData && !errorMessage && (
                  <div className="flex flex-col items-center justify-center h-64 text-center">
                    <Waypoints className="h-24 w-24 text-muted opacity-30 mb-4" />
                    <p className="text-muted-foreground mt-4 text-lg">
@@ -322,28 +450,46 @@ EOF"
                  </div>
               )}
               
-              {results && (
-                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Card>
-                    <CardHeader className="flex flex-row items-center justify-between pb-2">
-                      <CardTitle className="text-sm font-medium">Computation Time</CardTitle>
-                      <Clock className="h-4 w-4 text-muted-foreground" />
+              { (cities.length > 0 || solverStats.iteration > 0) &&
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <Card className="bg-muted/30">
+                    <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
+                      <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Iterations</CardTitle>
+                      <ListTree className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
-                    <CardContent>
-                      <div className="text-2xl font-bold">{results.time}</div>
+                    <CardContent className="pb-3 px-4">
+                      <div className="text-xl font-bold">{solverStats.iteration.toLocaleString()}</div>
                     </CardContent>
                   </Card>
-                  <Card>
-                    <CardHeader className="flex flex-row items-center justify-between pb-2">
-                      <CardTitle className="text-sm font-medium">Path Length</CardTitle>
+                  <Card className="bg-muted/30">
+                    <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
+                      <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Improvements</CardTitle>
+                      <CheckCircle className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent className="pb-3 px-4">
+                      <div className="text-xl font-bold">{solverStats.improvements.toLocaleString()}</div>
+                    </CardContent>
+                  </Card>
+                   <Card className="bg-muted/30">
+                    <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
+                      <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Current K</CardTitle>
+                      <Settings className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent className="pb-3 px-4">
+                      <div className="text-xl font-bold">{solverStats.currentK}</div>
+                    </CardContent>
+                  </Card>
+                  <Card className="col-span-2 md:col-span-3 bg-muted/30">
+                    <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
+                      <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Best Path Length</CardTitle>
                       <Route className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
-                    <CardContent>
-                      <div className="text-2xl font-bold">{results.pathLength.toLocaleString()} units</div>
+                    <CardContent className="pb-3 px-4">
+                      <div className="text-xl font-bold">{solverStats.bestDistance === Infinity ? "N/A" : solverStats.bestDistance.toFixed(2)}</div>
                     </CardContent>
                   </Card>
                 </div>
-              )}
+              }
             </CardContent>
           </Card>
         </div>
@@ -352,4 +498,3 @@ EOF"
   );
 }
 
-    
