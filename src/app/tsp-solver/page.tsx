@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, PauseCircle, Target, Percent, BarChartBig, Activity, FileCog, TrendingUp } from "lucide-react";
+import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, PauseCircle, Target, Percent, BarChartBig, Activity, FileCog, TrendingUp, Timer } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 
 interface City {
@@ -43,6 +43,7 @@ interface AggregatedBatchStats {
   maxDistance: number;
   avgDistance: number;
   avgTimePerRun: number; // in milliseconds
+  totalBatchTime: number; // in milliseconds
   totalTimesOptimalFound: number;
   avgApproximationRatio: number | null;
   probOptimalInTenRuns: number | null;
@@ -356,7 +357,7 @@ export default function TspSolverPage() {
       if (workerRef.current) {
         workerRef.current.terminate(); // Terminate previous if any
       }
-      const localWorker = new Worker('/solve-worker.js');
+      const localWorker = new Worker('/solve-worker.js'); // Ensure this path is correct
       workerRef.current = localWorker;
       
       const runStartTime = Date.now();
@@ -462,6 +463,7 @@ export default function TspSolverPage() {
 
 
     const results: BatchRunResult[] = [];
+    let totalBatchProcessingTime = 0;
     for (let i = 1; i <= numberOfRuns; i++) {
       setCurrentBatchRunNumber(i);
       resetSolverState(); // Reset for each run in batch
@@ -469,6 +471,7 @@ export default function TspSolverPage() {
         // eslint-disable-next-line no-await-in-loop
         const result = await runSingleSolverInstance();
         results.push({ ...result, runNumber: i });
+        totalBatchProcessingTime += result.time;
         setBatchRunResults([...results]); // Update state incrementally
       } catch (error: any) {
         setErrorMessage(`Error in batch run ${i}: ${error.message}`);
@@ -480,7 +483,7 @@ export default function TspSolverPage() {
     // Calculate aggregated stats
     if (results.length > 0) {
       const totalDistance = results.reduce((sum, r) => sum + r.distance, 0);
-      const totalTime = results.reduce((sum, r) => sum + r.time, 0);
+      // totalTime is already the sum of individual run times (totalBatchProcessingTime)
       const minDistance = Math.min(...results.map(r => r.distance));
       const maxDistance = Math.max(...results.map(r => r.distance));
       let totalTimesOptimalFound = 0;
@@ -490,7 +493,7 @@ export default function TspSolverPage() {
 
       if (currentOptimalDistance !== null && currentOptimalDistance > 0) {
         results.forEach(r => {
-          if (r.distance === currentOptimalDistance) {
+          if (Math.round(r.distance) === currentOptimalDistance) { // Compare rounded distance for safety
             totalTimesOptimalFound++;
           }
           const ratio = r.distance / currentOptimalDistance!;
@@ -501,17 +504,23 @@ export default function TspSolverPage() {
       
       if (results.length > 0 && totalTimesOptimalFound > 0 && currentOptimalDistance !== null) {
         const singleRunSuccessRate = totalTimesOptimalFound / results.length;
-        if (singleRunSuccessRate > 0) {
+        if (singleRunSuccessRate > 0 && singleRunSuccessRate <=1) { // Ensure rate is valid
           probOptimalInTenRuns = 1 - Math.pow(1 - singleRunSuccessRate, 10);
+        } else if (singleRunSuccessRate > 1) { // Should not happen, but as a fallback
+          probOptimalInTenRuns = 1;
+        } else {
+          probOptimalInTenRuns = 0;
         }
       }
+
 
       setAggregatedBatchStats({
         numberOfRuns: results.length,
         minDistance,
         maxDistance,
         avgDistance: totalDistance / results.length,
-        avgTimePerRun: totalTime / results.length,
+        avgTimePerRun: totalBatchProcessingTime / results.length,
+        totalBatchTime: totalBatchProcessingTime,
         totalTimesOptimalFound,
         avgApproximationRatio: validRatiosCount > 0 ? sumApproximationRatios / validRatiosCount : null,
         probOptimalInTenRuns,
@@ -774,6 +783,10 @@ export default function TspSolverPage() {
                     <div className="p-3 border rounded-md bg-muted/20">
                       <h4 className="text-xs font-medium text-muted-foreground">Avg Time/Run</h4>
                       <p className="text-lg font-bold">{formatTime(aggregatedBatchStats.avgTimePerRun)}</p>
+                    </div>
+                    <div className="p-3 border rounded-md bg-muted/20">
+                      <h4 className="text-xs font-medium text-muted-foreground">Total Batch Time</h4>
+                      <p className="text-lg font-bold">{formatTime(aggregatedBatchStats.totalBatchTime)}</p>
                     </div>
                      <div className="p-3 border rounded-md bg-muted/20">
                       <h4 className="text-xs font-medium text-muted-foreground">Optimal Found</h4>
