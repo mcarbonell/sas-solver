@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, XCircle, PauseCircle } from "lucide-react";
+import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, PauseCircle } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 
 interface City {
@@ -29,7 +29,6 @@ interface SolverStats {
   bestPossibleDistance?: number;
 }
 
-// TSP instances for the dropdown, names include .tsp extension for fetching
 const tspInstances = [
   { id: "att48.tsp", name: "att48.tsp (48 cities)" },
   { id: "berlin52.tsp", name: "berlin52.tsp (52 cities)" },
@@ -43,7 +42,6 @@ const tspInstances = [
   { id: "custom", name: "Custom Input" },
 ];
 
-// Function to parse TSPLIB text data
 function parseTSPLIB(textData: string, instanceName: string): City[] {
   const lines = textData.split('\n');
   const cities: City[] = [];
@@ -110,18 +108,19 @@ export default function TspSolverPage() {
   });
 
   const [maxK, setMaxK] = useState(3);
-  const [maxCitiesRegion, setMaxCitiesRegion] = useState(30); // For future parallel use
+  const [maxCitiesRegion, setMaxCitiesRegion] = useState(30);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const [startTime, setStartTime] = useState<number>(0);
-  const [elapsedTime, setElapsedTime] = useState<number>(0);
-  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Timer states
+  const solverStartTimeRef = useRef<number>(0); // To store Date.now() when timer starts
+  const [currentElapsedTime, setCurrentElapsedTime] = useState<number>(0); // Elapsed time in milliseconds
   const [formattedTime, setFormattedTime] = useState("00:00:00");
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Timer functions
+
   const formatTime = (timeInMillis: number): string => {
     const totalSeconds = Math.floor(timeInMillis / 1000);
     const hours = Math.floor(totalSeconds / 3600);
@@ -130,17 +129,20 @@ export default function TspSolverPage() {
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
+  // Update formattedTime whenever currentElapsedTime changes
+  useEffect(() => {
+    setFormattedTime(formatTime(currentElapsedTime));
+  }, [currentElapsedTime]);
+
   const startTimer = () => {
-    setStartTime(Date.now());
-    setElapsedTime(0);
-    setFormattedTime("00:00:00");
+    solverStartTimeRef.current = Date.now();
+    setCurrentElapsedTime(0); // Reset for the current run
+    
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
-      setElapsedTime(prev => {
-        const currentElapsed = Date.now() - startTime + prev; // prev is 0 at start
-        setFormattedTime(formatTime(currentElapsed));
-        return Date.now() - startTime; // Store current tick's elapsed
-      });
+      if (solverStartTimeRef.current > 0) { // Ensure timer was actually started
+        setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
+      }
     }, 1000);
   };
   
@@ -149,18 +151,19 @@ export default function TspSolverPage() {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
-     // Final update to ensure elapsedTime captures the full duration
-    setElapsedTime(prev => {
-        const finalElapsed = Date.now() - startTime; // Use prev if pausing, direct if stopping
-        setFormattedTime(formatTime(finalElapsed));
-        return finalElapsed;
-    });
+    // Final update to currentElapsedTime to capture the precise moment
+    if (solverStartTimeRef.current > 0) {
+      setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
+    }
   };
 
   const resetTimer = () => {
-    stopTimer();
-    setElapsedTime(0);
-    setFormattedTime("00:00:00");
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    solverStartTimeRef.current = 0;
+    setCurrentElapsedTime(0); // This will trigger useEffect to update formattedTime
   };
 
 
@@ -170,8 +173,8 @@ export default function TspSolverPage() {
       setCities([]); 
       setBestRoute([]);
       setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
-      resetTimer();
-      if (workerRef.current) { // Stop any existing worker if instance changes
+      resetTimer(); // Reset timer when instance changes
+      if (workerRef.current) { 
         workerRef.current.terminate();
         workerRef.current = null;
         setIsSolverRunning(false);
@@ -267,7 +270,6 @@ export default function TspSolverPage() {
         return { x: canvasX, y: canvasY };
     }
     
-    // Draw cities
     ctx.fillStyle = 'hsl(var(--primary))'; 
     cities.forEach((city) => {
       const { x: canvasX, y: canvasY } = getCanvasCoords(city);
@@ -276,7 +278,6 @@ export default function TspSolverPage() {
       ctx.fill();
     });
 
-    // Draw best route
     if (bestRoute.length > 0 && cities.length > 0) {
         ctx.beginPath();
         const startPoint = getCanvasCoords(cities[bestRoute[0]]);
@@ -534,7 +535,7 @@ EOF"
                       <div className="text-xl font-bold">{formattedTime}</div>
                     </CardContent>
                   </Card>
-                  <Card className="col-span-2 md:col-span-2 bg-muted/30"> {/* Adjusted span for better layout with timer */}
+                  <Card className="col-span-2 md:col-span-2 bg-muted/30"> 
                     <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
                       <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Best Path Length</CardTitle>
                       <Route className="h-4 w-4 text-muted-foreground" />
