@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, PauseCircle, Target, Percent, BarChartBig, Activity, FileCog } from "lucide-react";
+import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, PauseCircle, Target, Percent, BarChartBig, Activity, FileCog, TrendingUp } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 
 interface City {
@@ -45,6 +45,7 @@ interface AggregatedBatchStats {
   avgTimePerRun: number; // in milliseconds
   totalTimesOptimalFound: number;
   avgApproximationRatio: number | null;
+  probOptimalInTenRuns: number | null;
 }
 
 
@@ -485,6 +486,7 @@ export default function TspSolverPage() {
       let totalTimesOptimalFound = 0;
       let sumApproximationRatios = 0;
       let validRatiosCount = 0;
+      let probOptimalInTenRuns = null;
 
       if (currentOptimalDistance !== null && currentOptimalDistance > 0) {
         results.forEach(r => {
@@ -497,6 +499,13 @@ export default function TspSolverPage() {
         });
       }
       
+      if (results.length > 0 && totalTimesOptimalFound > 0 && currentOptimalDistance !== null) {
+        const singleRunSuccessRate = totalTimesOptimalFound / results.length;
+        if (singleRunSuccessRate > 0) {
+          probOptimalInTenRuns = 1 - Math.pow(1 - singleRunSuccessRate, 10);
+        }
+      }
+
       setAggregatedBatchStats({
         numberOfRuns: results.length,
         minDistance,
@@ -505,6 +514,7 @@ export default function TspSolverPage() {
         avgTimePerRun: totalTime / results.length,
         totalTimesOptimalFound,
         avgApproximationRatio: validRatiosCount > 0 ? sumApproximationRatios / validRatiosCount : null,
+        probOptimalInTenRuns,
       });
     }
 
@@ -778,6 +788,14 @@ export default function TspSolverPage() {
                         {aggregatedBatchStats.avgApproximationRatio === null ? "N/A" : aggregatedBatchStats.avgApproximationRatio.toFixed(4)}
                       </p>
                     </div>
+                    {aggregatedBatchStats.probOptimalInTenRuns !== null && (
+                      <div className="p-3 border rounded-md bg-muted/20">
+                        <h4 className="text-xs font-medium text-muted-foreground">Prob. Opt. in 10 Runs</h4>
+                        <p className="text-lg font-bold">
+                          {(aggregatedBatchStats.probOptimalInTenRuns * 100).toFixed(2)}%
+                        </p>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
