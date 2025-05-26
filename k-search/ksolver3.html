@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TSP Solver - Systematic Alternatives Search</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        button,
+        input {
+            margin: 10px;
+            padding: 10px;
+            font-size: 16px;
+        }
+
+        #stats {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>TSP Solver - Systematic Alternatives Search</h1>
+
+    <div id="stats">
+        <p>Num Ciudades: <span id="numCities">0</span></p>
+        <p>Iteración: <span id="iteration">0</span></p>
+        <p>Mejoras: <span id="improvements">0</span></p>
+        <p>Mejor Distancia: <span id="currentDistance">-</span></p>
+        <p>Mejor Distancia Global: <span id="bestDistance">-</span></p>
+        <p>Cota inferior: <span id="bestPossibleDistance">-</span></p>
+        <p>La cota inferior es simplemente la longitud del camino si cada ciudad se conectara a sus
+            dos vecinos más cercanos, sin tener en cuenta la validez del camino. Es un límite inferior
+            absoluto que seguramente sea irrealizable.
+        </p>
+        <p>Ratio (Mejor Distancia/Cota inferior): <span id="percentage">-</span></p>
+        <p>K actual: <span id="currentK">0</span></p>
+        <p>Tiempo: <span id="timer">00:00:00</span></p>
+        <p>Num Regiones: <span id="numregions">0</span></p>
+        <p>Tour: <span id="tour">0</span></p>
+    </div>
+    <div>
+        <label for="cityCount">Num Cities</label><input type="number" id="cityCount" value="20">
+        <label for="maxK">MaxK</label><input type="number" id="maxK" value="3">
+        <br>
+        <label for="maxCitiesRegion">Cities per Region</label><input type="number" id="maxCitiesRegion" value="30">
+        <input type="checkbox" id="drawNumbers"><label for="drawNumbers">Draw Numbers</label>
+        <input type="checkbox" id="drawRegions"><label for="drawRegions">Draw Regions</label>
+        <br>
+        <button id="generateBtn">Generar Ciudades Aleatorias</button>
+        <button id="deleteBtn">Borrar última ciudad</button>
+        <button id="loadTspBtn">Load TSP</button>
+        <select name="tspFileSelect" id="tspFileSelect">
+        </select>
+        <br>
+        <button id="solveBtn">Iniciar/Detener Solución</button>
+        <button id="solveParallelBtn">Iniciar Paralelo</button>
+
+        <br>
+        <input type="checkbox" id="debug"><label for="debug">Debug</label>
+        <input type="checkbox" id="repeat"><label for="repeat">Repeat</label>
+        <br>
+
+    </div>
+    <canvas id="tspCanvas" width="600" height="600" style="border:1px solid #000;"></canvas>
+
+    <pre id="log"></pre>
+
+    <textarea name="cities" id="citiesinput" cols="50" rows="20"></textarea>
+
+    <script src="tsp.js"></script>
+
+    <script>
+        // https://www.math.uwaterloo.ca/tsp/vlsi/index.html
+        const canvas = document.getElementById('tspCanvas');
+        const ctx = canvas.getContext('2d');
+        const generateBtn = document.getElementById('generateBtn');
+        const solveBtn = document.getElementById('solveBtn');
+        const solveParallelBtn = document.getElementById('solveParallelBtn');
+        const deleteBtn = document.getElementById('deleteBtn');
+        const loadTspBtn = document.getElementById('loadTspBtn');
+        const tspFileSelect = document.getElementById('tspFileSelect');
+
+        const cityCountInput = document.getElementById('cityCount');
+        const maxKInput = document.getElementById('maxK');
+        const maxCitiesRegionInput = document.getElementById('maxCitiesRegion');
+
+        const iterationSpan = document.getElementById('iteration');
+        const improvementsSpan = document.getElementById('improvements');
+        const currentDistanceSpan = document.getElementById('currentDistance');
+        const bestDistanceSpan = document.getElementById('bestDistance');
+        const tourSpan = document.getElementById('tour');
+
+        const bestPossibleDistanceSpan = document.getElementById('bestPossibleDistance');
+        const percentageSpan = document.getElementById('percentage');
+        const currentKSpan = document.getElementById('currentK');
+        const timerSpan = document.getElementById('timer');
+
+        const log = document.getElementById('log');
+        const drawNumbersInput = document.querySelector('#drawNumbers');
+        const drawRegionsInput = document.querySelector('#drawRegions');
+
+        const debugInput = document.querySelector('#debug');
+        const repeatInput = document.querySelector('#repeat');
+        const citiesInput = document.querySelector('#citiesinput');
+
+        let lineWidth = 1;
+
+        ///////////////////////////////////////////////////////////////////////////////////////////
+        // UI Event Listeneres
+        ///////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+        async function parseTSPLIB(filePath) {
+            const response = await fetch(filePath);
+            if (!response.ok) {
+                throw new Error('Error al cargar el archivo.');
+            }
+            const text = await response.text();
+
+            const lines = text.split('\n');
+            const tspData = {};
+
+            let readingCoords = false;
+            for (const line of lines) {
+                if (line.startsWith('EOF')) break;
+
+                if (readingCoords) {
+                    const [id, x, y] = line.trim().split(/\s+/).map(Number);
+                    tspData.nodes.push({ id, x, y });
+                } else {
+                    const [key, value] = line.split(':').map(str => str.trim());
+                    if ((key === 'NODE_COORD_SECTION') || (key === 'DISPLAY_DATA_SECTION')) {
+                        readingCoords = true;
+                        tspData.nodes = [];
+                    } else if (key) {
+                        tspData[key] = isNaN(value) ? value : Number(value);
+                    }
+                }
+            }
+
+            return tspData;
+        }
+
+
+        const tspFiles = [
+            'a280.tsp',
+            'ali535.tsp',
+            'att48.tsp',
+            'att532.tsp',
+            'bayg29.tsp',
+            'bays29.tsp',
+            'berlin52.tsp',
+            'bier127.tsp',
+            'brazil58.tsp',
+            'brd14051.tsp',
+            'brg180.tsp',
+            'burma14.tsp',
+            'ch130.tsp',
+            'ch150.tsp',
+            'd198.tsp',
+            'd493.tsp',
+            'd657.tsp',
+            'd1291.tsp',
+            'd1655.tsp',
+            'd2103.tsp',
+            'd15112.tsp',
+            'd18512.tsp',
+            'dantzig42.tsp',
+            'dsj1000.tsp',
+            'eil51.tsp',
+            'eil76.tsp',
+            'eil101.tsp',
+            'fl417.tsp',
+            'fl1400.tsp',
+            'fl1577.tsp',
+            'fl3795.tsp',
+            'fnl4461.tsp',
+            'fri26.tsp',
+            'gil262.tsp',
+            'gr17.tsp',
+            'gr21.tsp',
+            'gr24.tsp',
+            'gr48.tsp',
+            'gr96.tsp',
+            'gr120.tsp',
+            'gr137.tsp',
+            'gr202.tsp',
+            'gr431.tsp',
+            'gr666.tsp',
+            'hk48.tsp',
+            'kroA100.tsp',
+            'kroA150.tsp',
+            'kroA200.tsp',
+            'kroB100.tsp',
+            'kroB150.tsp',
+            'kroB200.tsp',
+            'kroC100.tsp',
+            'kroD100.tsp',
+            'kroE100.tsp',
+            'lin105.tsp',
+            'lin318.tsp',
+            'linhp318.tsp',
+            'nrw1379.tsp',
+            'p654.tsp',
+            'pa561.tsp',
+            'pcb442.tsp',
+            'pcb1173.tsp',
+            'pcb3038.tsp',
+            'pla7397.tsp',
+            'pla33810.tsp',
+            'pla85900.tsp',
+            'pr76.tsp',
+            'pr107.tsp',
+            'pr124.tsp',
+            'pr136.tsp',
+            'pr144.tsp',
+            'pr152.tsp',
+            'pr226.tsp',
+            'pr264.tsp',
+            'pr299.tsp',
+            'pr439.tsp',
+            'pr1002.tsp',
+            'pr2392.tsp',
+            'rat99.tsp',
+            'rat195.tsp',
+            'rat575.tsp',
+            'rat783.tsp',
+            'rd100.tsp',
+            'rd400.tsp',
+            'rl1304.tsp',
+            'rl1323.tsp',
+            'rl1889.tsp',
+            'rl5915.tsp',
+            'rl5934.tsp',
+            'rl11849.tsp',
+            'st70.tsp',
+            'swiss42.tsp',
+            'ts225.tsp',
+            'tsp225.tsp',
+            'u159.tsp',
+            'u574.tsp',
+            'u724.tsp',
+            'u1060.tsp',
+            'u1432.tsp',
+            'u1817.tsp',
+            'u2152.tsp',
+            'u2319.tsp',
+            'ulysses16.tsp',
+            'ulysses22.tsp',
+            'usa13509.tsp',
+            'vm1084.tsp',
+            'vm1748.tsp'
+        ];
+
+        // Función para crear opciones y añadirlas al select
+        function createOptions(options) {
+            options.forEach(file => {
+                const option = document.createElement('option');
+                option.value = file;
+                option.textContent = file;
+                tspFileSelect.appendChild(option);
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            createOptions(tspFiles);
+        });
+
+        loadTspBtn.addEventListener('click', () => {
+            const tspFile = tspFileSelect.value;
+            parseTSPLIB('tsplib/' + tspFile)
+                .then(tspData => {
+                    drawTSP(tspData);
+                    decomposeSpace(cities);
+                    citiesInput.value = JSON.stringify(cities, null, 2);
+                    drawMap();
+                })
+                .catch(error => console.error('Error al parsear el archivo:', error));
+        });
+
+        drawNumbersInput.addEventListener('click', () => {
+            drawMap();
+        });
+
+        drawRegionsInput.addEventListener('click', () => {
+            drawMap();
+        });
+
+        debugInput.addEventListener('click', () => {
+            drawMap();
+        });
+
+        repeatInput.addEventListener('click', () => {
+        });
+
+        maxCitiesRegionInput.addEventListener('change', () => {
+            MAX_CITIES_PER_REGION = maxCitiesRegionInput.value;
+            decomposeSpace(cities);
+            drawMap();
+        })
+
+
+
+        canvas.addEventListener('click', function (event) {
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            cities.push({ x: x, y: y });
+            // console.log("Cities array:", cities);
+
+            decomposeSpace(cities);
+
+            document.getElementById('numCities').innerText = cities.length;
+            citiesInput.value = JSON.stringify(cities, null, 2);
+
+            drawMap();
+        });
+
+
+        generateBtn.addEventListener('click', generateRandomCities);
+        solveBtn.addEventListener('click', () => {
+            if (isRunning) stop();
+            else start();
+        });
+
+
+        solveParallelBtn.addEventListener('click', () => {
+            if (isRunning) stop();
+            else startParallelProcessing();
+        });
+
+        deleteBtn.addEventListener('click', () => {
+            if (isRunning) stop();
+            cities.pop();
+
+            decomposeSpace(cities);
+            // console.log('Regions', regions);
+
+            document.getElementById('numCities').innerText = cities.length;
+
+            clearCanvas()
+            // drawRoute(bestRoute);
+            drawCities();
+            drawRegions();
+        });
+
+
+        citiesInput.addEventListener('input', () => {
+            try {
+                // Intentar parsear el contenido del textarea como JSON
+                let jsonText = citiesInput.value.replace(/^\s+|\s+$/g, ''); //Elimina espacios al inicio o al final
+                let parsedJSON = JSON.parse(jsonText);
+
+                // Si llegamos aquí, el JSON es válido
+                // Actualizar el array con el nuevo contenido
+                cities = [];
+                bestRoute = [];
+                cities = parsedJSON;
+                decomposeSpace(cities);
+
+            } catch (error) {
+                // Si llegamos aquí, el JSON no es válido
+                console.error('JSON inválido:', error);
+            }
+        });
+
+
+        ///////////////////////////////////////////////////////////////////////////////////////////
+        // canvas
+        ///////////////////////////////////////////////////////////////////////////////////////////
+
+        function getPixel(imageData, x, y) {
+            if (x < 0 || y < 0 || x >= imageData.width || y >= imageData.height) {
+                return [-1, -1, -1, -1];  // impossible color
+            } else {
+                const offset = (y * imageData.width + x) * 4;
+                return imageData.data.slice(offset, offset + 4);
+            }
+        }
+
+        function setPixel(imageData, x, y, color) {
+            const offset = (y * imageData.width + x) * 4;
+            imageData.data[offset + 0] = color[0];
+            imageData.data[offset + 1] = color[1];
+            imageData.data[offset + 2] = color[2];
+            imageData.data[offset + 3] = color[0];
+        }
+
+        function colorsMatch(a, b) {
+            return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+        }
+
+        function floodFill(ctx, x, y, fillColor) {
+            // read the pixels in the canvas
+            const imageData = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+            // get the color we're filling
+            const targetColor = getPixel(imageData, x, y);
+
+            // check we are actually filling a different color
+            if (!colorsMatch(targetColor, fillColor)) {
+
+                const pixelsToCheck = [x, y];
+                while (pixelsToCheck.length > 0) {
+                    const y = pixelsToCheck.pop();
+                    const x = pixelsToCheck.pop();
+
+                    const currentColor = getPixel(imageData, x, y);
+                    if (colorsMatch(currentColor, targetColor)) {
+                        setPixel(imageData, x, y, fillColor);
+                        pixelsToCheck.push(x + 1, y);
+                        pixelsToCheck.push(x - 1, y);
+                        pixelsToCheck.push(x, y + 1);
+                        pixelsToCheck.push(x, y - 1);
+                    }
+                }
+
+                // put the data back
+                ctx.putImageData(imageData, 0, 0);
+            }
+        }
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function drawCities() {
+            cities.forEach((city, index) => {
+                ctx.beginPath();
+                ctx.arc(city.x, city.y, 3, 0, 2 * Math.PI);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+
+                if (drawNumbersInput.checked) {
+                    // Dibujar el índice de la ciudad
+                    ctx.font = '12px Arial';
+                    ctx.fillStyle = 'black';
+                    ctx.fillText(index + 1, city.x + 7, city.y + 4); // Ajusta las coordenadas según sea necesario
+                }
+            });
+        }
+
+        function drawRoute(route) {
+            if (route.length == 0) return;
+
+            ctx.beginPath();
+            ctx.moveTo(cities[route[0]].x, cities[route[0]].y);
+            for (let i = 1; i < route.length; i++) {
+                ctx.lineTo(cities[route[i]].x, cities[route[i]].y);
+            }
+            ctx.lineTo(cities[route[0]].x, cities[route[0]].y);
+
+            ctx.strokeStyle = 'blue';
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+
+            // floodFill(ctx, 1, 1, [100, 0, 0, 255]);
+
+        }
+
+        function drawInfo() {
+            ctx.font = '14px Arial';
+            ctx.fillStyle = 'black';
+            let percent = (currentDistance / bestPossibleDistance);
+            let textInfo =
+                'Cities:' + cities.length.toLocaleString('es-ES') +
+                ' ' + getTime() + ':' +
+                ' k=' + currentK +
+                ' Best Distance:' + currentDistance.toFixed(2).toLocaleString('es-ES') +
+                // ' Ratio:' + percent.toFixed(2) +
+                ' Routes:' + iteration.toLocaleString('es-ES') +
+                ' Improvements:' + improvements.toLocaleString('es-ES');
+            ctx.fillText(textInfo, 12, 12); // Ajusta las coordenadas según sea necesario
+
+            let arrayReorganizado = route.map(valor => valor + 1);
+            const posicion1 = arrayReorganizado.indexOf(1);
+
+            // Si el 1 está en el array, crea un nuevo array que comience con el 1
+            if (posicion1 !== -1) {
+                arrayReorganizado = [1, ...arrayReorganizado.slice(posicion1 + 1), ...arrayReorganizado.slice(0, posicion1)];
+                // console.log(arrayReorganizado);
+            } else {
+                // Si el 1 no está en el array, lo inserta en la primera posición
+                arrayReorganizado = [1, ...arrayReorganizado];
+                // console.log(arrayReorganizado);
+            }
+
+            tourSpan.textContent = arrayReorganizado.join(", ");
+        }
+
+
+        function drawRegions() {
+            if (!drawRegionsInput.checked) return;
+            for (let i = 0; i < regions.length; i++) {
+                drawRegion(regions[i], regions[i].cities.length);
+            }
+            document.getElementById('numregions').innerText = regions.length;
+
+        }
+
+        function drawRegion(region, number = 0) {
+            ctx.beginPath();
+
+            ctx.moveTo(region.x, region.y);
+            ctx.lineTo(region.x + region.width, region.y);
+            ctx.lineTo(region.x + region.width, region.y + region.height);
+            ctx.lineTo(region.x, region.y + region.height);
+            ctx.lineTo(region.x, region.y);
+
+            ctx.strokeStyle = 'green';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            if (region.cities.length > 0) {
+                ctx.beginPath();
+                ctx.moveTo(region.cities[0].x, region.cities[0].y);
+                for (let i = 1; i < region.cities.length; i++) {
+                    ctx.lineTo(region.cities[i].x, region.cities[i].y);
+                }
+                ctx.lineTo(region.cities[0].x, region.cities[0].y);
+                ctx.strokeStyle = 'green';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            // if (false)
+            if (number > 0) {
+                ctx.font = '12px Arial';
+                ctx.fillStyle = 'black';
+                ctx.fillText(number, region.x, region.y + 12);
+                // ctx.fillText(region.id, region.x + 15, region.y + 12);
+            }
+        }
+
+
+        function drawTSP(tspData) {
+
+            console.log('drawTSP', tspData);
+            console.log('TSP nodes', tspData.nodes);
+
+            clearCanvas();
+
+            ctx.font = '12px Arial';
+            ctx.fillStyle = 'black';
+            ctx.fillText(tspData.NAME + ' ' + tspData.COMMENT, 7, 12);
+
+
+            const minX = Math.min(...tspData.nodes.map(p => p.x));
+            const maxX = Math.max(...tspData.nodes.map(p => p.x));
+            const minY = Math.min(...tspData.nodes.map(p => p.y));
+            const maxY = Math.max(...tspData.nodes.map(p => p.y));
+
+            const scaleX = canvas.width / (maxX - minX);
+            const scaleY = canvas.height / (maxY - minY);
+            const scale = Math.min(scaleX, scaleY);
+
+            console.log('Scales', canvas.width, canvas.height, maxX, minX, maxX, maxY);
+            console.log('Scale', scaleX, scaleY, scale);
+
+            cities = [];
+
+            for (const point of tspData.nodes) {
+                if (point.x == undefined) continue;
+
+                const id = point.id;
+                const x = (point.x - minX) * scale;
+                // const y = canvas.height - (point.y - minY) * scaleY;
+                const y = canvas.height - (point.y - minY) * scale;
+
+                cities.push({ x, y });
+
+                // console.log(point, id, x, y);
+
+                ctx.beginPath();
+                ctx.fillStyle = 'red';
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+                if (drawNumbersInput.checked) {
+                    // Dibujar el índice de la ciudad
+                    ctx.font = '12px Arial';
+                    ctx.fillStyle = 'black';
+                    ctx.fillText(point.id, x + 7, y + 4); // Ajusta las coordenadas según sea necesario
+                }
+            }
+        }
+
+        function drawMap() {
+            clearCanvas();
+            drawRoute(bestRoute);
+            drawCities();
+            drawRegions();
+        }
+
+
+        ///////////////////////////////////////////////////////////////////////////////////////////
+        // UI INTERFACE
+        ///////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+        function generateRandomCities() {
+            const numCities = parseInt(cityCountInput.value);
+            cities = [];
+            for (let i = 0; i < numCities; i++) {
+                cities.push({
+                    x: (Math.random() * (canvas.width - 30)) + 15,
+                    y: (Math.random() * (canvas.height - 30)) + 15
+                });
+            }
+            decomposeSpace(cities);
+            drawMap();
+            reset();
+
+            citiesInput.value = JSON.stringify(cities, null, 2);
+        }
+
+        function updateStats() {
+            iterationSpan.textContent = iteration.toLocaleString('es-ES');
+            improvementsSpan.textContent = improvements;
+            if (currentDistance < bestDistance)
+                bestDistance = currentDistance;
+            bestDistanceSpan.textContent = bestDistance.toFixed(2).toLocaleString('es-ES');
+            currentDistanceSpan.textContent = currentDistance.toFixed(2).toLocaleString('es-ES');
+
+            bestPossibleDistanceSpan.textContent = bestPossibleDistance.toFixed(2).toLocaleString('es-ES');
+            let percent = (currentDistance / bestPossibleDistance);
+            percentageSpan.textContent = percent.toFixed(2);
+            currentKSpan.textContent = currentK;
+        }
+
+        function reset() {
+            stop();
+            iteration = 0;
+            improvements = 0;
+            bestDistance = Infinity;
+            currentDistance = Infinity;
+
+            bestPossibleDistance = 0;
+            currentK = 0;
+            bestRoute = [];
+            log.textContent = '';
+            document.getElementById('numCities').innerText = cities.length;
+            updateStats();
+        }
+
+        function start() {
+            console.clear();
+            isRunning = true;
+            solveBtn.textContent = 'Detener Solución';
+            iteration = 0;
+            oldBestDistance = 0;
+            currentDistance = 0;
+            maxK = maxKInput.value;
+            log.textContent =
+                'NEW START' + ' MaxK=' + maxK + '\n\n'
+                + log.textContent;
+            resetTimer();
+            startTimer();
+            startSolving();
+        }
+
+        function stop() {
+            isRunning = false;
+            solveBtn.textContent = 'Iniciar Solución';
+            stopTimer();
+            if (worker) {
+                // worker.postMessage({ type: 'stop' });
+                worker.terminate();
+            }
+        }
+
+        function formatNumber(num) {
+            const suffixes = ['', 'K', 'M', 'B', 'T']; // Sufijos para miles, millones, etc.
+
+            if (num === 0) return '0';
+
+            const suffixIndex = Math.floor(Math.log10(Math.abs(num))) / 3; // Calcula el índice del sufijo adecuado
+
+            const formattedNumber = (num / Math.pow(10, suffixIndex * 3)).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,'); // Formatea el número y agrega los puntos
+
+            return `${formattedNumber} ${suffixes[suffixIndex]}`; // Agrega el sufijo adecuado
+        }
+
+        function formatNumber2(num) {
+            const numString = num.toString();
+            const parts = numString.split('.');
+            const intPart = parts[0];
+            const fracPart = parts[1] ? '.' + parts[1] : '';
+
+            let formattedIntPart = '';
+            for (let i = intPart.length - 1, j = 0; i >= 0; i--, j++) {
+                if (j > 0 && j % 3 === 0) {
+                    formattedIntPart = '.' + formattedIntPart;
+                }
+                formattedIntPart = intPart[i] + formattedIntPart;
+            }
+
+            return formattedIntPart + fracPart;
+        }
+
+
+
+        ///////////////////////////////////////////////////////////////////////////////////////////
+        // WORKERS
+        ///////////////////////////////////////////////////////////////////////////////////////////
+
+
+        function startSolving() {
+            if (worker) {
+                worker.terminate();
+            }
+
+            worker = new Worker('solve-worker.js');
+            maxK = maxKInput.value;
+
+            worker.onmessage = function (e) {
+                // console.log('onmessage', e.data);
+                if (e.data.type === 'stats') {
+                    iteration = e.data.iteration;
+                    improvements = e.data.improvements;
+                    currentDistance = e.data.bestDistance;
+                    currentK = e.data.currentK;
+                    bestPossibleDistance = e.data.bestPossibleDistance;
+                    updateStats();
+                    //console.log(e.data);
+                } else if (e.data.type === 'improvement') {
+                    iteration = e.data.iteration;
+                    improvements = e.data.improvements;
+                    bestRoute = e.data.route;
+                    let diff = e.data.distance - oldBestDistance;
+                    currentDistance = e.data.distance;
+                    oldBestDistance = currentDistance;
+                    currentK = e.data.currentK;
+
+                    if (!debugInput.checked) return;
+
+                    updateStats();
+
+                    log.textContent =
+                        getTime() + ': '
+                        + 'k=' + currentK + ' '
+                        + ' Best:' + currentDistance.toFixed(2).toLocaleString('es-ES') + ' '
+                        + diff.toFixed(2) +
+                        // ' Rutas:' + formatNumber2(iteration) + '\n'
+                        ' Routes:' + iteration.toLocaleString('es-ES') + '\n'
+                        + log.textContent;
+
+                    if (debugInput.checked) {
+                        drawMap();
+                    }
+
+                } else if (e.data.type === 'solution') {
+
+                    console.log(e.data);
+
+                    bestRoute = e.data.route;
+                    let diff = e.data.distance - oldBestDistance;
+                    currentDistance = e.data.distance;
+                    oldBestDistance = currentDistance;
+                    currentK = e.data.currentK;
+                    log.textContent =
+                        getTime() + ': '
+                        + 'k=' + currentK + ' '
+                        + ' Best Distance:' + currentDistance.toFixed(2).toLocaleString('es-ES') + ' '
+                        + diff.toFixed(2) +
+                        // ' Rutas:' + formatNumber2(iteration) + '\n'
+                        ' Routes:' + iteration.toLocaleString('es-ES') + '\n'
+                        + log.textContent;
+                    stop();
+                    drawMap();
+
+                    resetTimer();
+                    startTimer();
+                    if (repeatInput.checked)
+                        startSolving();
+                }
+            };
+
+            worker.postMessage({
+                type: 'start',
+                cities: cities,
+                id: 'GLOBAL',
+                maxK: maxK,
+                debug: debugInput.checked
+            });
+        }
+
+        // Función para iniciar el procesamiento paralelo
+        function startParallelProcessing() {
+            const workers = [];
+            let solutions = 0;
+            isRunning = true;
+            iteration = 0;
+            improvements = 0;
+            maxK = maxKInput.value;
+
+            resetTimer();
+            startTimer();
+
+            console.clear();
+            decomposeSpace(cities);
+
+            for (let i = 0; i < regions.length; i++) {
+                if (regions[i].cities.length == 0)
+                    continue;
+
+                const worker = new Worker('solve-worker.js');
+                workers.push(worker);
+
+                worker.onmessage = function (e) {
+                    if (e.data.type === 'solution') {
+                        solutions++;
+
+                        // console.log('worker: ', e.data);
+                        console.log('worker finished: ', solutions, workers.length);
+                        let regionId = e.data.id;
+                        rootQuadTree.setSolucion(regionId, e.data.route);
+                        iteration += e.data.iteration;
+                        improvements += e.data.improvements;
+
+                        clearCanvas()
+                        drawCities();
+                        // drawRoute(bestRoute);
+                        drawRegions();
+
+
+                        if (solutions == workers.length) {
+                            if (debugInput.checked) console.log('All regions finished');
+
+                            rootQuadTree.mergeRoutes();
+                            cities = rootQuadTree.cities;
+                            bestRoute = [...Array(cities.length).keys()];
+                            currentDistance = calculateTotalDistance(cities);
+                            currentK = e.data.currentK;
+
+                            log.textContent =
+                                getTime() + ': '
+                                + 'Parallel k=' + currentK
+                                + ' Workers:' + workers.length
+                                + ' Best Distance:' + currentDistance.toFixed(2).toLocaleString('es-ES') + ' '
+                                + ' Routes:' + iteration.toLocaleString('es-ES') + '\n'
+                                + log.textContent;
+
+                            stop();
+
+                            decomposeSpace(cities);
+                            clearCanvas()
+                            drawCities();
+                            drawRoute(bestRoute);
+
+                            let newOrder = [];
+                            bestRoute.forEach((index) => newOrder.push(cities[index]));
+                            citiesInput.value = JSON.stringify(newOrder, null, 2);
+
+                            return;
+                        }
+
+                    }
+                };
+
+                // worker.postMessage({ region: regions[i] });
+                worker.postMessage({
+                    type: 'start',
+                    cities: regions[i].cities,
+                    id: regions[i].id,
+                    maxK: maxK,
+                    debug: false
+                });
+                // Hay que pasar en el mensaje el índice de la region.
+            }
+        }
+
+
+        generateRandomCities();
+
+
+
+        ///////////////////////////////////////////////////////////////////////////////////////////
+        // TIMER
+        ///////////////////////////////////////////////////////////////////////////////////////////
+
+        // Función para formatear el tiempo transcurrido en un formato de hh:mm:ss
+        function timeToString(time) {
+            let diffInHrs = time / 3600000;
+            let hh = Math.floor(diffInHrs);
+
+            let diffInMin = (diffInHrs - hh) * 60;
+            let mm = Math.floor(diffInMin);
+
+            let diffInSec = (diffInMin - mm) * 60;
+            let ss = Math.floor(diffInSec);
+
+            let formattedHH = hh.toString().padStart(2, "0");
+            let formattedMM = mm.toString().padStart(2, "0");
+            let formattedSS = ss.toString().padStart(2, "0");
+
+            return `${formattedHH}:${formattedMM}:${formattedSS}`;
+        }
+
+        // Función para actualizar el tiempo en el display
+        function getTime() {
+            let now = Date.now();
+            let diff = now - startTime + elapsedTime;
+            return timeToString(diff);
+        }
+
+        function displayTime() {
+            timerSpan.innerHTML = getTime();
+        }
+
+        // Iniciar el cronómetro
+        function startTimer() {
+            if (timerInterval) {
+                return; // Si ya está iniciado, no hacer nada
+            }
+            startTime = Date.now();
+            timerInterval = setInterval(displayTime, 1000);
+        }
+
+        // Pausar el cronómetro
+        function stopTimer() {
+            clearInterval(timerInterval);
+            timerInterval = null;
+            elapsedTime += Date.now() - startTime;
+        }
+
+        // Reiniciar el cronómetro
+        function resetTimer() {
+            clearInterval(timerInterval);
+            timerInterval = null;
+            elapsedTime = 0;
+            timerSpan.innerHTML = "00:00:00";
+        }
+    </script>
+
+</body>
+
+</html>
