@@ -774,11 +774,25 @@ export default function TspSolverPage() {
                   <CardContent className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     <div className="p-3 border rounded-md bg-muted/20">
                       <h4 className="text-xs font-medium text-muted-foreground">Min Distance</h4>
-                      <p className="text-lg font-bold">{aggregatedBatchStats.minDistance}</p>
+                      <p className="text-lg font-bold">
+                        {aggregatedBatchStats.minDistance}
+                        {currentOptimalDistance && currentOptimalDistance > 0 && (
+                            <span className="text-sm text-muted-foreground ml-1">
+                                ({(aggregatedBatchStats.minDistance / currentOptimalDistance).toFixed(4)})
+                            </span>
+                        )}
+                      </p>
                     </div>
                     <div className="p-3 border rounded-md bg-muted/20">
                       <h4 className="text-xs font-medium text-muted-foreground">Max Distance</h4>
-                      <p className="text-lg font-bold">{aggregatedBatchStats.maxDistance}</p>
+                      <p className="text-lg font-bold">
+                        {aggregatedBatchStats.maxDistance}
+                        {currentOptimalDistance && currentOptimalDistance > 0 && (
+                            <span className="text-sm text-muted-foreground ml-1">
+                                ({(aggregatedBatchStats.maxDistance / currentOptimalDistance).toFixed(4)})
+                            </span>
+                        )}
+                      </p>
                     </div>
                     <div className="p-3 border rounded-md bg-muted/20">
                       <h4 className="text-xs font-medium text-muted-foreground">Avg Distance</h4>
