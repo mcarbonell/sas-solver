@@ -116,12 +116,61 @@ export default function TspSolverPage() {
   const workerRef = useRef<Worker | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const [startTime, setStartTime] = useState<number>(0);
+  const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [formattedTime, setFormattedTime] = useState("00:00:00");
+
+  // Timer functions
+  const formatTime = (timeInMillis: number): string => {
+    const totalSeconds = Math.floor(timeInMillis / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  };
+
+  const startTimer = () => {
+    setStartTime(Date.now());
+    setElapsedTime(0);
+    setFormattedTime("00:00:00");
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    timerIntervalRef.current = setInterval(() => {
+      setElapsedTime(prev => {
+        const currentElapsed = Date.now() - startTime + prev; // prev is 0 at start
+        setFormattedTime(formatTime(currentElapsed));
+        return Date.now() - startTime; // Store current tick's elapsed
+      });
+    }, 1000);
+  };
+  
+  const stopTimer = () => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+     // Final update to ensure elapsedTime captures the full duration
+    setElapsedTime(prev => {
+        const finalElapsed = Date.now() - startTime; // Use prev if pausing, direct if stopping
+        setFormattedTime(formatTime(finalElapsed));
+        return finalElapsed;
+    });
+  };
+
+  const resetTimer = () => {
+    stopTimer();
+    setElapsedTime(0);
+    setFormattedTime("00:00:00");
+  };
+
+
   useEffect(() => {
     const loadInstance = async () => {
       setErrorMessage(null);
       setCities([]); 
       setBestRoute([]);
       setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
+      resetTimer();
       if (workerRef.current) { // Stop any existing worker if instance changes
         workerRef.current.terminate();
         workerRef.current = null;
@@ -169,6 +218,7 @@ export default function TspSolverPage() {
       }
     };
     loadInstance();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedInstance, customInstanceData]);
 
   useEffect(() => {
@@ -235,14 +285,6 @@ export default function TspSolverPage() {
             const point = getCanvasCoords(cities[bestRoute[i]]);
             ctx.lineTo(point.x, point.y);
         }
-        // Close the path by drawing a line back to the start city if it's a TSP tour
-        // The worker sends route including the return to start, so this might double draw the last segment or be okay.
-        // For now, let's assume worker sends N points for N cities, and we close it.
-        // If worker sends N+1 points (start city repeated at end), then this line is not strictly needed.
-        // ksolver3.html drawRoute: for (let i = 1; i < route.length; i++) ctx.lineTo... then ctx.lineTo(cities[route[0]])
-        // This implies worker returns N points, and drawing connects back to start.
-        // The worker's calculateDistance: totalDistance = distances[route[route.length-1]][route[0]];
-        // This confirms the worker's route array is N elements long, and does not repeat start city at the end.
         ctx.lineTo(startPoint.x, startPoint.y); 
         ctx.strokeStyle = 'hsl(var(--accent))';
         ctx.lineWidth = 2;
@@ -256,19 +298,19 @@ export default function TspSolverPage() {
 
     setIsSolverRunning(true);
     setErrorMessage(null);
-    setBestRoute([]); // Clear previous route
+    setBestRoute([]); 
     setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
+    startTimer();
 
 
-    // Ensure worker is terminated if it exists, before creating a new one
     if (workerRef.current) {
         workerRef.current.terminate();
     }
     
-    workerRef.current = new Worker('/solve-worker.js'); // Worker from public folder
+    workerRef.current = new Worker('/solve-worker.js'); 
 
     workerRef.current.onmessage = (e) => {
-      const { type, iteration, improvements, bestDistance, currentK, route, distance, id } = e.data;
+      const { type, iteration, improvements, bestDistance, currentK, route, distance } = e.data;
       
       if (type === 'stats' || type === 'improvement' || type === 'solution') {
         setSolverStats(prevStats => ({
@@ -287,6 +329,7 @@ export default function TspSolverPage() {
       if (type === 'solution') {
         console.log("Solver finished", e.data);
         setIsSolverRunning(false);
+        stopTimer();
         if (workerRef.current) {
           workerRef.current.terminate();
           workerRef.current = null;
@@ -298,6 +341,7 @@ export default function TspSolverPage() {
       console.error("Worker error:", error);
       setErrorMessage("An error occurred in the solver worker.");
       setIsSolverRunning(false);
+      stopTimer();
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
@@ -309,28 +353,30 @@ export default function TspSolverPage() {
     workerRef.current.postMessage({
       type: 'start',
       cities: citiesForWorker,
-      id: 'GLOBAL', // Or derive from instance name
+      id: 'GLOBAL', 
       maxK: maxK,
-      debug: false // Add a debug checkbox later if needed
+      debug: false 
     });
   };
 
   const handleStopSolver = () => {
     if (workerRef.current) {
-      workerRef.current.postMessage({ type: 'stop' }); // Graceful stop if implemented in worker
+      workerRef.current.postMessage({ type: 'stop' }); 
       workerRef.current.terminate();
       workerRef.current = null;
     }
     setIsSolverRunning(false);
-    // Optionally, keep current stats and route, or clear them. For now, keep.
+    stopTimer();
   };
   
-  // Cleanup worker on component unmount
   useEffect(() => {
     return () => {
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
+      }
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
       }
     };
   }, []);
@@ -413,7 +459,7 @@ EOF"
         </Card>
 
         <div className="lg:col-span-2">
-          <Card className="shadow-lg min-h-[500px]"> {/* Increased min-height */}
+          <Card className="shadow-lg min-h-[500px]">
             <CardHeader>
               <CardTitle className="text-2xl">Solution Visualization & Results</CardTitle>
               <CardDescription>
@@ -450,7 +496,7 @@ EOF"
                  </div>
               )}
               
-              { (cities.length > 0 || solverStats.iteration > 0) &&
+              { (cities.length > 0 || solverStats.iteration > 0 || isSolverRunning) &&
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   <Card className="bg-muted/30">
                     <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
@@ -479,7 +525,16 @@ EOF"
                       <div className="text-xl font-bold">{solverStats.currentK}</div>
                     </CardContent>
                   </Card>
-                  <Card className="col-span-2 md:col-span-3 bg-muted/30">
+                  <Card className="bg-muted/30">
+                    <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
+                      <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Elapsed Time</CardTitle>
+                      <Clock className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent className="pb-3 px-4">
+                      <div className="text-xl font-bold">{formattedTime}</div>
+                    </CardContent>
+                  </Card>
+                  <Card className="col-span-2 md:col-span-2 bg-muted/30"> {/* Adjusted span for better layout with timer */}
                     <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
                       <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Best Path Length</CardTitle>
                       <Route className="h-4 w-4 text-muted-foreground" />
