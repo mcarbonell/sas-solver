@@ -32,7 +32,7 @@ const tspInstances = [
 
 // Function to parse TSPLIB text data
 function parseTSPLIB(textData: string, instanceName: string): City[] {
-  const lines = textData.split('\n');
+  const lines = textData.split('\\n');
   const cities: City[] = [];
   let readingCoords = false;
 
@@ -95,12 +95,15 @@ export default function TspSolverPage() {
   useEffect(() => {
     const loadInstance = async () => {
       setErrorMessage(null);
+      setCities([]); // Clear previous cities
       if (selectedInstance && selectedInstance !== "custom") {
         setIsRunning(true); // Indicate loading
         try {
-          const response = await fetch(`/k-search/tsplib/${selectedInstance}`);
+          // Fetch from the new API route
+          const response = await fetch(`/api/tsp-instance?name=${selectedInstance}`);
           if (!response.ok) {
-            throw new Error(`Failed to fetch TSP instance: ${selectedInstance} (status: ${response.status})`);
+             const errorData = await response.json().catch(() => ({error: `Failed to fetch TSP instance: ${selectedInstance} (status: ${response.status})`}));
+            throw new Error(errorData.error || `Failed to fetch TSP instance: ${selectedInstance} (status: ${response.status})`);
           }
           const text = await response.text();
           const parsedCities = parseTSPLIB(text, selectedInstance);
@@ -131,7 +134,8 @@ export default function TspSolverPage() {
           setIsRunning(false);
         }
       } else {
-        setCities([]); // Clear cities if no instance or custom data
+        // No instance selected or custom data not provided
+        setIsRunning(false); // Ensure loading indicator is off
       }
     };
     loadInstance();
@@ -274,7 +278,7 @@ EOF"
 
             <Button onClick={handleRunSolver} disabled={isRunning || (!selectedInstance && !customInstanceData) || (selectedInstance === "custom" && !customInstanceData) } className="w-full text-lg py-6">
               <PlayCircle className="mr-2 h-6 w-6" />
-              {isRunning && cities.length === 0 ? "Loading Data..." : isRunning ? "Running Solver..." : "Run SAS Solver"}
+              {isRunning && cities.length === 0 && !errorMessage ? "Loading Data..." : isRunning ? "Running Solver..." : "Run SAS Solver"}
             </Button>
           </CardContent>
         </Card>
@@ -284,12 +288,12 @@ EOF"
             <CardHeader>
               <CardTitle className="text-2xl">Solution Visualization & Results</CardTitle>
               <CardDescription>
-                {results ? "The optimal path found by SAS and performance metrics." : "TSP instance visualization."}
+                {results ? "The optimal path found by SAS and performance metrics." : cities.length > 0 ? "TSP instance cities." : "Awaiting data or selection."}
               </CardDescription>
             </CardHeader>
             <CardContent>
               {errorMessage && (
-                <div className="text-red-500 p-4 border border-red-500 rounded-md">
+                <div className="text-red-500 p-4 border border-red-500 rounded-md bg-destructive/10">
                   <p><strong>Error:</strong> {errorMessage}</p>
                 </div>
               )}
@@ -346,5 +350,3 @@ EOF"
     </div>
   );
 }
-
-    
