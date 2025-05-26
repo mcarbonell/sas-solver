@@ -5,15 +5,16 @@ import './globals.css';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Toaster } from "@/components/ui/toaster";
 
-const geistSans = GeistSans({
-  variable: '--font-geist-sans',
-  subsets: ['latin'],
-});
-
-const geistMono = GeistMono({
-  variable: '--font-geist-mono',
-  subsets: ['latin'],
-});
+// Removed the incorrect function calls for GeistSans and GeistMono
+// const geistSans = GeistSans({
+//   variable: '--font-geist-sans',
+//   subsets: ['latin'],
+// });
+//
+// const geistMono = GeistMono({
+//   variable: '--font-geist-mono',
+//   subsets: ['latin'],
+// });
 
 export const metadata: Metadata = {
   title: 'SAS Solver Suite',
@@ -27,7 +28,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${GeistSans.variable} ${GeistMono.variable} antialiased`}>
         <MainLayout>{children}</MainLayout>
         <Toaster />
       </body>
