@@ -38,7 +38,8 @@ function distance(city1, city2) {
 }
 
 function calcDistance(city1, city2) {
-    return Math.sqrt(Math.pow(city2.x - city1.x, 2) + Math.pow(city2.y - city1.y, 2));
+    // TSPLIB EUC_2D convention: round to nearest integer
+    return Math.round(Math.sqrt(Math.pow(city2.x - city1.x, 2) + Math.pow(city2.y - city1.y, 2)));
 }
 
 function calculateDistance(route) {
@@ -142,7 +143,7 @@ function initializeLocalHeuristics() {
         minPossible[i] = distances[i][a] + distances[i][b];
         bestPossibleDistance += minPossible[i];
     }
-    bestPossibleDistance = bestPossibleDistance / 2;
+    bestPossibleDistance = Math.round(bestPossibleDistance / 2); // Also round this
 }
 
 function updateLocalHeuristics(improvedRoute) {
@@ -238,13 +239,11 @@ function solve() {
 
 self.onmessage = function (e) {
     if (e.data.type === 'start') {
-        // console.log('onmessage', e.data);
+        console.log('onmessage', e.data);
         id = e.data.id;
-        cities = e.data.cities; // Expects array of {x, y}
+        cities = e.data.cities;
         debug = e.data.debug;
         maxK = e.data.maxK;
-        isRunning = true;
-
 
         if (debug) console.log('MaxK', maxK);
 
@@ -260,9 +259,8 @@ self.onmessage = function (e) {
         setTimeout(solve, 0);
     } else if (e.data.type === 'stop') {
         isRunning = false;
-        // console.log('onmessage stop', e.data);
+        console.log('onmessage', e.data);
     }
 };
 
-// Send stats periodically if needed, but the main updates are event-driven
-// setInterval(sendStats, 1000);
+setInterval(sendStats, 1000);

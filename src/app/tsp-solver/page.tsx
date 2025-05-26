@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, PauseCircle } from "lucide-react";
+import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, PauseCircle, Target, Percent } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 
 interface City {
@@ -25,7 +25,7 @@ interface SolverStats {
   iteration: number;
   improvements: number;
   currentK: number;
-  bestDistance: number;
+  bestDistance: number; // Will be an integer from worker due to Math.round()
   bestPossibleDistance?: number;
 }
 
@@ -67,7 +67,7 @@ function parseTSPLIB(textData: string, instanceName: string): City[] {
       }
     }
   }
-  if (cities.length === 0 && readingCoords === false && instanceName !== "Custom Input") {
+  if (cities.length === 0 && readingCoords === false && instanceName !== "Custom Input" && !instanceName.startsWith("Optimal solutions")) {
       for (const line of lines) {
         const trimmedLine = line.trim();
         if (trimmedLine.startsWith('EOF') || trimmedLine.startsWith('TOUR_SECTION') || trimmedLine.match(/^[A-Z_]+:/i) || trimmedLine === "") continue;
@@ -108,17 +108,36 @@ export default function TspSolverPage() {
   });
 
   const [maxK, setMaxK] = useState(3);
-  const [maxCitiesRegion, setMaxCitiesRegion] = useState(30);
+  const [maxCitiesRegion, setMaxCitiesRegion] = useState(30); // Unused for now
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Timer states
-  const solverStartTimeRef = useRef<number>(0); // To store Date.now() when timer starts
-  const [currentElapsedTime, setCurrentElapsedTime] = useState<number>(0); // Elapsed time in milliseconds
+  const solverStartTimeRef = useRef<number>(0);
+  const [currentElapsedTime, setCurrentElapsedTime] = useState<number>(0);
   const [formattedTime, setFormattedTime] = useState("00:00:00");
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [optimalSolutionsData, setOptimalSolutionsData] = useState<Record<string, number> | null>(null);
+  const [currentOptimalDistance, setCurrentOptimalDistance] = useState<number | null>(null);
+
+  useEffect(() => {
+    const fetchOptimalSolutions = async () => {
+      try {
+        const response = await fetch('/api/optimal-solutions');
+        if (!response.ok) {
+          throw new Error('Failed to fetch optimal solutions');
+        }
+        const data = await response.json();
+        setOptimalSolutionsData(data);
+      } catch (error) {
+        console.error("Error fetching optimal solutions:", error);
+        setOptimalSolutionsData({}); // Set to empty object on error to prevent repeated fetches
+      }
+    };
+    fetchOptimalSolutions();
+  }, []);
 
 
   const formatTime = (timeInMillis: number): string => {
@@ -129,18 +148,16 @@ export default function TspSolverPage() {
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
-  // Update formattedTime whenever currentElapsedTime changes
   useEffect(() => {
     setFormattedTime(formatTime(currentElapsedTime));
   }, [currentElapsedTime]);
 
   const startTimer = () => {
     solverStartTimeRef.current = Date.now();
-    setCurrentElapsedTime(0); // Reset for the current run
-    
+    setCurrentElapsedTime(0); 
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
-      if (solverStartTimeRef.current > 0) { // Ensure timer was actually started
+      if (solverStartTimeRef.current > 0) {
         setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
       }
     }, 1000);
@@ -151,19 +168,21 @@ export default function TspSolverPage() {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
-    // Final update to currentElapsedTime to capture the precise moment
     if (solverStartTimeRef.current > 0) {
       setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
     }
   };
 
-  const resetTimer = () => {
+  const resetTimerAndStats = () => {
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
     solverStartTimeRef.current = 0;
-    setCurrentElapsedTime(0); // This will trigger useEffect to update formattedTime
+    setCurrentElapsedTime(0);
+    setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
+    setBestRoute([]);
+    setCurrentOptimalDistance(null);
   };
 
 
@@ -171,17 +190,19 @@ export default function TspSolverPage() {
     const loadInstance = async () => {
       setErrorMessage(null);
       setCities([]); 
-      setBestRoute([]);
-      setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
-      resetTimer(); // Reset timer when instance changes
+      resetTimerAndStats();
+      
       if (workerRef.current) { 
         workerRef.current.terminate();
         workerRef.current = null;
         setIsSolverRunning(false);
       }
 
+      let problemNameForOptimalLookup: string | null = null;
+
       if (selectedInstance && selectedInstance !== "custom") {
         setIsLoadingData(true); 
+        problemNameForOptimalLookup = selectedInstance.replace('.tsp', '');
         try {
           const response = await fetch(`/api/tsp-instance?name=${selectedInstance}`);
           if (!response.ok) {
@@ -203,6 +224,8 @@ export default function TspSolverPage() {
         }
       } else if (selectedInstance === "custom" && customInstanceData) {
         setIsLoadingData(true);
+        // For custom data, we don't have a direct name for optimal lookup unless provided separately
+        problemNameForOptimalLookup = "custom"; // Or parse a NAME field if present
         try {
           const parsedCities = parseTSPLIB(customInstanceData, "Custom Input");
            if (parsedCities.length === 0 && customInstanceData.trim() !== "") {
@@ -219,10 +242,16 @@ export default function TspSolverPage() {
       } else {
         setIsLoadingData(false);
       }
+
+      if (problemNameForOptimalLookup && optimalSolutionsData && optimalSolutionsData[problemNameForOptimalLookup]) {
+        setCurrentOptimalDistance(optimalSolutionsData[problemNameForOptimalLookup]);
+      } else {
+        setCurrentOptimalDistance(null);
+      }
     };
     loadInstance();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedInstance, customInstanceData]);
+  }, [selectedInstance, customInstanceData, optimalSolutionsData]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -299,8 +328,13 @@ export default function TspSolverPage() {
 
     setIsSolverRunning(true);
     setErrorMessage(null);
-    setBestRoute([]); 
-    setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
+    resetTimerAndStats(); // Reset stats before running, but keep current optimal
+    const problemNameForOptimalLookup = selectedInstance ? selectedInstance.replace('.tsp', '') : null;
+    if (problemNameForOptimalLookup && optimalSolutionsData && optimalSolutionsData[problemNameForOptimalLookup]) {
+        setCurrentOptimalDistance(optimalSolutionsData[problemNameForOptimalLookup]);
+    } else {
+        setCurrentOptimalDistance(null);
+    }
     startTimer();
 
 
@@ -382,6 +416,9 @@ export default function TspSolverPage() {
     };
   }, []);
 
+  const approximationRatio = currentOptimalDistance && solverStats.bestDistance !== Infinity && currentOptimalDistance > 0
+    ? (solverStats.bestDistance / currentOptimalDistance)
+    : null;
 
   return (
     <div className="container mx-auto py-8 px-4 md:px-6">
@@ -393,7 +430,7 @@ export default function TspSolverPage() {
           </h1>
         </div>
         <p className="text-xl text-muted-foreground">
-          Run the SAS algorithm on TSP instances and visualize the solution.
+          Run the SAS algorithm on TSP instances and visualize the solution. Compare with known optimal values.
         </p>
       </header>
 
@@ -464,7 +501,9 @@ EOF"
             <CardHeader>
               <CardTitle className="text-2xl">Solution Visualization & Results</CardTitle>
               <CardDescription>
-                {solverStats.bestDistance !== Infinity ? `Best path length: ${solverStats.bestDistance.toFixed(2)}` : cities.length > 0 ? "TSP instance cities. Ready to solve." : "Awaiting data or selection."}
+                {solverStats.bestDistance !== Infinity ? `SAS path length: ${solverStats.bestDistance}` : cities.length > 0 ? "TSP instance cities. Ready to solve." : "Awaiting data or selection."}
+                {currentOptimalDistance && ` Optimal: ${currentOptimalDistance}.`}
+                 {approximationRatio && ` Ratio: ${approximationRatio.toFixed(4)}.`}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -498,7 +537,7 @@ EOF"
               )}
               
               { (cities.length > 0 || solverStats.iteration > 0 || isSolverRunning) &&
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <Card className="bg-muted/30">
                     <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
                       <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Iterations</CardTitle>
@@ -535,13 +574,33 @@ EOF"
                       <div className="text-xl font-bold">{formattedTime}</div>
                     </CardContent>
                   </Card>
-                  <Card className="col-span-2 md:col-span-2 bg-muted/30"> 
+                  <Card className="bg-muted/30"> 
                     <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
-                      <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Best Path Length</CardTitle>
+                      <CardTitle className="text-xs font-medium uppercase text-muted-foreground">SAS Path Length</CardTitle>
                       <Route className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent className="pb-3 px-4">
-                      <div className="text-xl font-bold">{solverStats.bestDistance === Infinity ? "N/A" : solverStats.bestDistance.toFixed(2)}</div>
+                      <div className="text-xl font-bold">{solverStats.bestDistance === Infinity ? "N/A" : solverStats.bestDistance}</div>
+                    </CardContent>
+                  </Card>
+                   <Card className="bg-muted/30"> 
+                    <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
+                      <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Optimal Path</CardTitle>
+                      <Target className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent className="pb-3 px-4">
+                      <div className="text-xl font-bold">{currentOptimalDistance === null ? "N/A" : currentOptimalDistance}</div>
+                    </CardContent>
+                  </Card>
+                  <Card className="col-span-2 md:col-span-2 bg-muted/30"> 
+                    <CardHeader className="flex flex-row items-center justify-between pb-1 pt-3 px-4">
+                      <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Approximation Ratio</CardTitle>
+                      <Percent className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent className="pb-3 px-4">
+                      <div className="text-xl font-bold">
+                        {approximationRatio === null ? "N/A" : approximationRatio.toFixed(4)}
+                      </div>
                     </CardContent>
                   </Card>
                 </div>
