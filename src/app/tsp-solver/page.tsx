@@ -154,6 +154,7 @@ export default function TspSolverPage() {
   const [batchRunResults, setBatchRunResults] = useState<BatchRunResult[]>([]);
   const [aggregatedBatchStats, setAggregatedBatchStats] = useState<AggregatedBatchStats | null>(null);
   const [batchInstanceName, setBatchInstanceName] = useState<string | null>(null);
+  const [batchEtrFormatted, setBatchEtrFormatted] = useState<string>("");
 
 
   useEffect(() => {
@@ -174,6 +175,7 @@ export default function TspSolverPage() {
   }, []);
 
   const formatTime = (timeInMillis: number): string => {
+    if (timeInMillis < 0) timeInMillis = 0;
     const totalSeconds = Math.floor(timeInMillis / 1000);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -190,7 +192,9 @@ export default function TspSolverPage() {
     setCurrentElapsedTime(0); 
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
-      setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
+      if (solverStartTimeRef.current > 0) { // ensure solverStartTimeRef is set
+        setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
+      }
     }, 1000);
   };
   
@@ -199,7 +203,6 @@ export default function TspSolverPage() {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
-    // Ensure elapsedTime is updated one last time
     if(solverStartTimeRef.current > 0){
         setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
     }
@@ -214,7 +217,6 @@ export default function TspSolverPage() {
     setCurrentElapsedTime(0);
     setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
     setBestRoute([]);
-    // currentOptimalDistance is set when loading instance, so not reset here
   };
 
 
@@ -225,6 +227,7 @@ export default function TspSolverPage() {
       resetSolverState();
       setAggregatedBatchStats(null); 
       setBatchInstanceName(null);
+      setBatchEtrFormatted("");
       
       if (workerRef.current) { 
         workerRef.current.terminate();
@@ -361,13 +364,13 @@ export default function TspSolverPage() {
   const runSingleSolverInstance = (): Promise<BatchRunResult> => {
     return new Promise((resolve, reject) => {
       if (workerRef.current) {
-        workerRef.current.terminate(); // Terminate previous if any
+        workerRef.current.terminate(); 
       }
-      const localWorker = new Worker('/solve-worker.js'); // Ensure this path is correct
+      const localWorker = new Worker('/solve-worker.js'); 
       workerRef.current = localWorker;
       
       const runStartTime = Date.now();
-      startTimer(); // Start visual timer for this run
+      startTimer(); 
 
       localWorker.onmessage = (e) => {
         const { type, iteration, improvements, bestDistance, currentK, route, distance: solutionDistance } = e.data;
@@ -386,12 +389,12 @@ export default function TspSolverPage() {
         }
         
         if (type === 'solution') {
-          stopTimer(); // Stop visual timer
+          stopTimer(); 
           const runEndTime = Date.now();
           localWorker.terminate();
           workerRef.current = null;
           resolve({
-            runNumber: 0, // Placeholder, will be set by caller
+            runNumber: 0, 
             distance: solutionDistance,
             time: runEndTime - runStartTime,
             iterations: iteration,
@@ -428,6 +431,7 @@ export default function TspSolverPage() {
     resetSolverState(); 
     setAggregatedBatchStats(null);
     setBatchInstanceName(null);
+    setBatchEtrFormatted("");
     const problemNameForOptimalLookup = selectedInstance ? selectedInstance.replace('.tsp', '') : null;
     if (problemNameForOptimalLookup && optimalSolutionsData && optimalSolutionsData[problemNameForOptimalLookup]) {
         setCurrentOptimalDistance(optimalSolutionsData[problemNameForOptimalLookup]);
@@ -451,6 +455,8 @@ export default function TspSolverPage() {
       workerRef.current = null;
     }
     setIsSolverRunning(false);
+    setIsBatchRunning(false); 
+    setBatchEtrFormatted(""); 
     stopTimer();
   };
 
@@ -461,6 +467,7 @@ export default function TspSolverPage() {
     setErrorMessage(null);
     setBatchRunResults([]);
     setAggregatedBatchStats(null);
+    setBatchEtrFormatted("");
     
     const currentInstance = tspInstances.find(inst => inst.id === selectedInstance);
     setBatchInstanceName(currentInstance ? currentInstance.name.split(' (')[0] : (selectedInstance === "custom" ? "Custom Input" : "Unknown Instance"));
@@ -477,6 +484,7 @@ export default function TspSolverPage() {
     const results: BatchRunResult[] = [];
     let totalBatchProcessingTime = 0;
     for (let i = 1; i <= numberOfRuns; i++) {
+      if(!isBatchRunning && i > 1) break; // Check if stop was requested
       setCurrentBatchRunNumber(i);
       resetSolverState(); 
       try {
@@ -485,11 +493,24 @@ export default function TspSolverPage() {
         results.push({ ...result, runNumber: i });
         totalBatchProcessingTime += result.time;
         setBatchRunResults([...results]); 
+
+        const runsCompleted = i;
+        const runsRemaining = numberOfRuns - runsCompleted;
+        if (runsCompleted > 0 && runsRemaining > 0) {
+          const avgTimePerRun = totalBatchProcessingTime / runsCompleted;
+          const etrMs = runsRemaining * avgTimePerRun;
+          setBatchEtrFormatted(` (ETR: ${formatTime(etrMs)})`);
+        } else {
+          setBatchEtrFormatted(""); 
+        }
+
       } catch (error: any) {
         setErrorMessage(`Error in batch run ${i}: ${error.message}`);
+        setBatchEtrFormatted("");
         break; 
       }
     }
+    setBatchEtrFormatted("");
 
     if (results.length > 0) {
       const totalDistance = results.reduce((sum, r) => sum + r.distance, 0);
@@ -655,7 +676,7 @@ export default function TspSolverPage() {
             <CardHeader>
               <CardTitle className="text-2xl">Solution Visualization & Results</CardTitle>
               <CardDescription>
-                {solverStats.bestDistance !== Infinity ? `SAS path length: ${solverStats.bestDistance}` : cities.length > 0 ? "TSP instance cities. Ready to solve." : "Awaiting data or selection."}
+                {solverStats.bestDistance !== Infinity ? `SAS path length: ${solverStats.bestDistance.toFixed(0)}` : cities.length > 0 ? "TSP instance cities. Ready to solve." : "Awaiting data or selection."}
                 {currentOptimalDistance && ` Optimal: ${currentOptimalDistance}.`}
                  {approximationRatio && ` Ratio: ${approximationRatio.toFixed(4)}.`}
                  {isBatchRunning && ` (Run ${currentBatchRunNumber} of ${numberOfRuns})`}
@@ -735,7 +756,7 @@ export default function TspSolverPage() {
                       <Route className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent className="pb-3 px-4">
-                      <div className="text-xl font-bold">{solverStats.bestDistance === Infinity ? "N/A" : solverStats.bestDistance}</div>
+                      <div className="text-xl font-bold">{solverStats.bestDistance === Infinity ? "N/A" : solverStats.bestDistance.toFixed(0)}</div>
                     </CardContent>
                   </Card>
                    <Card className="bg-muted/30"> 
@@ -765,7 +786,7 @@ export default function TspSolverPage() {
                 <div className="flex flex-col items-center justify-center my-6">
                     <Activity className="h-12 w-12 text-primary animate-spin mb-3" />
                     <p className="text-muted-foreground text-md">
-                        Batch analysis in progress... Run {currentBatchRunNumber} of {numberOfRuns}
+                        Batch analysis in progress... Run {currentBatchRunNumber} of {numberOfRuns}{batchEtrFormatted}
                     </p>
                 </div>
               )}
@@ -782,7 +803,7 @@ export default function TspSolverPage() {
                     <div className="p-3 border rounded-md bg-muted/20">
                       <h4 className="text-xs font-medium text-muted-foreground">Min Distance</h4>
                       <p className="text-lg font-bold">
-                        {aggregatedBatchStats.minDistance}
+                        {aggregatedBatchStats.minDistance.toFixed(0)}
                         {currentOptimalDistance && currentOptimalDistance > 0 && (
                             <span className="text-sm text-muted-foreground ml-1">
                                 ({(aggregatedBatchStats.minDistance / currentOptimalDistance).toFixed(4)})
@@ -793,7 +814,7 @@ export default function TspSolverPage() {
                     <div className="p-3 border rounded-md bg-muted/20">
                       <h4 className="text-xs font-medium text-muted-foreground">Max Distance</h4>
                       <p className="text-lg font-bold">
-                        {aggregatedBatchStats.maxDistance}
+                        {aggregatedBatchStats.maxDistance.toFixed(0)}
                         {currentOptimalDistance && currentOptimalDistance > 0 && (
                             <span className="text-sm text-muted-foreground ml-1">
                                 ({(aggregatedBatchStats.maxDistance / currentOptimalDistance).toFixed(4)})
