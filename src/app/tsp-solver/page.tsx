@@ -112,11 +112,11 @@ function parseTSPLIB(textData: string, instanceName: string): City[] {
             if (!isNaN(x) && !isNaN(y)) {
                 cities.push({ id, x, y });
             }
-         } else if (parts.length === 2) {
+         } else if (parts.length === 2) { // Fallback for simple X Y format
             const x = parseFloat(parts[0]);
             const y = parseFloat(parts[1]);
             if (!isNaN(x) && !isNaN(y)) {
-                cities.push({ id: cities.length + 1, x, y });
+                cities.push({ id: cities.length + 1, x, y }); // Assign a sequential ID
             }
          }
       }
@@ -148,7 +148,7 @@ export default function TspSolverPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const solverStartTimeRef = useRef<number>(0);
-  const [currentElapsedTime, setCurrentElapsedTime] = useState<number>(0); // in milliseconds
+  const [currentElapsedTime, setCurrentElapsedTime] = useState<number>(0); 
   const [formattedTime, setFormattedTime] = useState("00:00:00");
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -200,7 +200,7 @@ export default function TspSolverPage() {
 
   const startTimer = () => {
     solverStartTimeRef.current = Date.now();
-    setCurrentElapsedTime(0);
+    setCurrentElapsedTime(0); // Reset elapsed time display
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
       if (solverStartTimeRef.current > 0) {
@@ -214,17 +214,19 @@ export default function TspSolverPage() {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
-    if(solverStartTimeRef.current > 0){
+    if(solverStartTimeRef.current > 0){ // Ensure startTime was set
         setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
     }
   };
   
   const resetSolverState = (fullResetForNewInstance = false) => {
+    // Only clear the interval if it's not a batch run in progress OR it's a full reset
     if (fullResetForNewInstance || (!isSolverRunning && !isBatchRunning)) { 
         if (timerIntervalRef.current) {
             clearInterval(timerIntervalRef.current);
             timerIntervalRef.current = null;
         }
+        // setCurrentElapsedTime(0); // Resetting here for single runs, batch timer handled separately
     }
 
     setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
@@ -243,10 +245,12 @@ export default function TspSolverPage() {
         workerRef.current.terminate();
         workerRef.current = null;
       }
-      isBatchRunIntentActiveRef.current = false; // Stop any ongoing batch if instance changes
+      isBatchRunIntentActiveRef.current = false;
       setIsSolverRunning(false);
       setIsBatchRunning(false);
+      setBatchEtrFormatted("");
       resetSolverState(true); 
+      setCurrentElapsedTime(0); // Ensure timer display is reset
 
       let newCities: City[] = [];
       let errorMsg: string | null = null;
@@ -286,14 +290,14 @@ export default function TspSolverPage() {
           setIsLoadingData(false);
         }
       } else {
-         newCities = [];
+         newCities = []; // No instance selected, or custom is empty
       }
       setCities(newCities);
       setErrorMessage(errorMsg);
     };
 
     loadInstanceData();
-  }, [selectedInstance, customInstanceData]);
+  }, [selectedInstance, customInstanceData]); // Removed optimalSolutionsData as dependency to prevent batch stop
 
 
   useEffect(() => {
@@ -307,7 +311,7 @@ export default function TspSolverPage() {
     } else {
       setCurrentOptimalDistance(null);
     }
-  }, [cities, selectedInstance, optimalSolutionsData]);
+  }, [cities, selectedInstance, optimalSolutionsData]); // cities dependency is okay here
 
 
   useEffect(() => {
@@ -319,6 +323,10 @@ export default function TspSolverPage() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (cities.length === 0) {
+      // Optional: Display a message if no cities
+      // ctx.fillStyle = 'hsl(var(--muted-foreground))';
+      // ctx.textAlign = 'center';
+      // ctx.fillText("Load a TSP instance or provide custom data.", canvas.width / 2, canvas.height / 2);
       return;
     }
 
@@ -328,6 +336,7 @@ export default function TspSolverPage() {
 
     const cityCoords = cities.map(c => ({ x: c.x, y: c.y }));
 
+    // Handle single city case for scaling
     let minX = Math.min(...cityCoords.map(p => p.x));
     let maxX = Math.max(...cityCoords.map(p => p.x));
     let minY = Math.min(...cityCoords.map(p => p.y));
@@ -341,6 +350,7 @@ export default function TspSolverPage() {
     const rangeX = maxX - minX;
     const rangeY = maxY - minY;
 
+    // Avoid division by zero if all points are collinear or coincident
     const effectiveRangeX = rangeX === 0 ? 1 : rangeX;
     const effectiveRangeY = rangeY === 0 ? 1 : rangeY;
 
@@ -350,12 +360,15 @@ export default function TspSolverPage() {
 
     function getCanvasCoords(city: City | CityPoint) {
         let canvasX = padding + (city.x - minX) * scale;
+        // Invert Y-axis because canvas origin (0,0) is top-left
         let canvasY = canvas!.height - padding - (city.y - minY) * scale;
+        // Center if single point or all collinear
         if (rangeX === 0) canvasX = canvas!.width / 2;
         if (rangeY === 0) canvasY = canvas!.height / 2;
         return { x: canvasX, y: canvasY };
     }
 
+    // Draw cities
     ctx.fillStyle = 'hsl(var(--primary))';
     cities.forEach((city) => {
       const { x: canvasX, y: canvasY } = getCanvasCoords(city);
@@ -364,6 +377,7 @@ export default function TspSolverPage() {
       ctx.fill();
     });
 
+    // Draw best route
     if (bestRoute.length > 0 && cities.length > 0) {
         ctx.beginPath();
         const startPoint = getCanvasCoords(cities[bestRoute[0]]);
@@ -372,13 +386,14 @@ export default function TspSolverPage() {
             const point = getCanvasCoords(cities[bestRoute[i]]);
             ctx.lineTo(point.x, point.y);
         }
-        ctx.lineTo(startPoint.x, startPoint.y);
+        // Close the loop by drawing a line back to the start city
+        ctx.lineTo(startPoint.x, startPoint.y); // Connect back to the start
         ctx.strokeStyle = 'hsl(var(--accent))';
         ctx.lineWidth = 2;
         ctx.stroke();
     }
 
-  }, [cities, bestRoute]);
+  }, [cities, bestRoute]); // Dependency on cities and bestRoute
 
 
   const runSingleSolverInstance = (): Promise<BatchRunResult> => {
@@ -391,10 +406,10 @@ export default function TspSolverPage() {
         }
 
         const localWorker = new Worker('/solve-worker.js');
-        workerRef.current = localWorker;
+        workerRef.current = localWorker; // Store the current worker
 
         const runStartTime = Date.now();
-        if (!isBatchRunning) {
+        if (!isBatchRunning) { // Only start individual timer if not part of a batch
             startTimer();
         }
 
@@ -415,12 +430,12 @@ export default function TspSolverPage() {
           }
 
           if (type === 'solution') {
-            if (!isBatchRunning) {
+            if (!isBatchRunning) { // Only stop individual timer if not part of a batch
               stopTimer();
             }
             const runEndTime = Date.now();
             localWorker.terminate();
-            if (workerRef.current === localWorker) { 
+            if (workerRef.current === localWorker) { // Important: check if this is still the active worker
               workerRef.current = null;
             }
             resolve({
@@ -444,7 +459,7 @@ export default function TspSolverPage() {
 
         const citiesForWorker: CityPoint[] = cities.map(c => ({ x: c.x, y: c.y }));
         if (!citiesForWorker || citiesForWorker.length === 0) {
-           localWorker.terminate(); 
+           localWorker.terminate(); // Clean up worker
            if (workerRef.current === localWorker) workerRef.current = null;
            reject(new Error("Cannot start worker: cities list is empty."));
            return;
@@ -452,9 +467,9 @@ export default function TspSolverPage() {
         localWorker.postMessage({
           type: 'start',
           cities: citiesForWorker,
-          id: 'GLOBAL',
+          id: 'GLOBAL', // Or some unique ID for the run
           maxK: maxK,
-          debug: false
+          debug: false // Or make this configurable
         });
 
       } catch (promiseSetupError: any) {
@@ -475,7 +490,7 @@ export default function TspSolverPage() {
     isBatchRunIntentActiveRef.current = false; // Not a batch run
     setErrorMessage(null);
     resetSolverState(false);
-    setAggregatedBatchStats(null);
+    setAggregatedBatchStats(null); // Clear batch stats if any
     setHistogramData(null);
     setBatchInstanceName(null);
     setBatchEtrFormatted("");
@@ -492,14 +507,15 @@ export default function TspSolverPage() {
 
   const handleStopSolver = () => {
     if (workerRef.current) {
+      // workerRef.current.postMessage({ type: 'stop' }); // If worker implements graceful stop
       workerRef.current.terminate();
       workerRef.current = null;
     }
-    isBatchRunIntentActiveRef.current = false; 
+    isBatchRunIntentActiveRef.current = false; // Signal to stop batch if it was running
     setIsSolverRunning(false);
-    setIsBatchRunning(false); 
-    setBatchEtrFormatted(""); 
-    stopTimer();
+    setIsBatchRunning(false); // Also ensure batch state is cleared
+    setBatchEtrFormatted(""); // Clear ETR
+    stopTimer(); // Stop the main timer (for single or batch)
   };
 
   const prepareHistogramData = (results: BatchRunResult[], numBins: number = 15): HistogramBin[] => {
@@ -510,42 +526,55 @@ export default function TspSolverPage() {
     const maxVal = Math.max(...distances);
 
     if (minVal === maxVal) {
+      // Handle case where all distances are the same
       return [{ range: `${minVal.toFixed(0)}`, count: distances.length }];
     }
 
-    const binWidth = Math.max(1, Math.ceil((maxVal - minVal +1) / numBins));
+    // Ensure binWidth is at least 1, and make bins reasonably sized
+    const binWidth = Math.max(1, Math.ceil((maxVal - minVal +1) / numBins)); // +1 to include maxVal
     const bins: HistogramBin[] = [];
 
+    // Adjust starting point to be a multiple of binWidth for cleaner ranges if possible
     let currentBinStart = Math.floor(minVal / binWidth) * binWidth;
+    // Ensure the first bin actually captures the minVal
     if (currentBinStart > minVal && binWidth > 1) currentBinStart -= binWidth;
 
 
     for (let i = 0; ; i++) {
         const binStart = currentBinStart + (i * binWidth);
-        const binEnd = binStart + binWidth -1;
+        const binEnd = binStart + binWidth -1; // Inclusive end
 
+        // Stop if the current bin starts beyond the max value and we already have some bins
         if (binStart > maxVal && bins.length > 0) break;
 
         const count = distances.filter(d => d >= binStart && d <= binEnd).length;
 
         let rangeLabel = `${binStart.toFixed(0)}-${binEnd.toFixed(0)}`;
-        if (binWidth === 1) rangeLabel = `${binStart.toFixed(0)}`;
+        if (binWidth === 1) rangeLabel = `${binStart.toFixed(0)}`; // For single value bins
+
+        // Add bin if it has count or if it's the first bin and within data range,
+        // or if previous bin had count and this bin is still within data range.
+        // This helps include empty bins between populated ones for better visualization.
          if (count > 0 || (bins.length === 0 && binStart <= maxVal) || (bins.length > 0 && bins[bins.length-1].count > 0 && binStart <= maxVal)) {
             bins.push({
               range: rangeLabel,
               count: count,
             });
         }
-        if (binEnd >= maxVal || bins.length >= numBins * 2) break; 
+        if (binEnd >= maxVal || bins.length >= numBins * 2) break; // Safety break if too many bins are generated
     }
     
+    // Attempt to reduce number of bins if too many low-count or empty bins are generated
+    // This is a heuristic and might need further refinement
     let significantBins = bins.filter(b => b.count > 0);
-    if (significantBins.length === 0 && bins.length > 0) significantBins = [bins[0]];
+    if (significantBins.length === 0 && bins.length > 0) significantBins = [bins[0]]; // Ensure at least one bin if data exists
 
     const distinctValues = new Set(distances).size;
-    if (significantBins.length > numBins * 1.5 && significantBins.length > Math.min(5, distinctValues) ) {
+    if (significantBins.length > numBins * 1.5 && significantBins.length > Math.min(5, distinctValues) ) { // If too sparse and many bins
+        // Try re-binning with fewer bins. Heuristic: half the bins, or number of distinct values if very few.
         return prepareHistogramData(results, Math.max(Math.min(5, distinctValues), Math.floor(numBins / 1.5)));
     }
+
     return bins;
   };
 
@@ -557,19 +586,19 @@ export default function TspSolverPage() {
     setErrorMessage(null);
     const tempBatchResults: BatchRunResult[] = [];
     setBatchRunResults(tempBatchResults); // Clear previous batch results visually
-    setAggregatedBatchStats(null);
-    setHistogramData(null);
+    setAggregatedBatchStats(null); // Clear previous aggregated stats
+    setHistogramData(null); // Clear previous histogram
     setBatchEtrFormatted("");
-    setBatchMaxKUsed(maxK);
+    setBatchMaxKUsed(maxK); // Store Max K used for this batch
 
     const currentTSPInstance = tspInstances.find(inst => inst.id === selectedInstance);
     setBatchInstanceName(currentTSPInstance ? currentTSPInstance.name.split(' (')[0] : (selectedInstance === "custom" ? "Custom Input" : "Unknown Instance"));
 
     const resultsCollector: BatchRunResult[] = [];
     let totalBatchProcessingTime = 0;
-    const currentLoopNumberOfRuns = numberOfRuns; 
+    const currentLoopNumberOfRuns = numberOfRuns; // Capture at start of batch
 
-    startTimer();
+    startTimer(); // Start the main timer for the entire batch
 
     try {
         for (let i = 1; i <= currentLoopNumberOfRuns; i++) {
@@ -589,6 +618,7 @@ export default function TspSolverPage() {
                 totalBatchProcessingTime += result.time;
                 setBatchRunResults([...resultsCollector]); // Update UI with current list of results
 
+                // ETR Calculation
                 const runsCompleted = i;
                 const runsRemaining = currentLoopNumberOfRuns - runsCompleted;
                 if (runsCompleted > 0 && runsRemaining > 0 && totalBatchProcessingTime > 0) {
@@ -599,17 +629,18 @@ export default function TspSolverPage() {
                     setBatchEtrFormatted("");
                 }
 
-            } catch (error: any) { 
+            } catch (error: any) { // Catch errors from runSingleSolverInstance
                 setErrorMessage(`Error in batch run ${i}: ${error.message || 'Unknown error'}`);
-                break; 
+                // Optionally, decide if the batch should stop on single run error
+                break; // Stop batch on error
             }
         }
     } finally {
-        stopTimer(); 
-        isBatchRunIntentActiveRef.current = false; 
-        setIsBatchRunning(false); 
-        setCurrentBatchRunNumber(0); 
-        setBatchEtrFormatted(""); 
+        stopTimer(); // Stop the main timer for the entire batch
+        isBatchRunIntentActiveRef.current = false; // Reset intent
+        setIsBatchRunning(false); // Clear batch running state
+        setCurrentBatchRunNumber(0); // Reset current run number display
+        setBatchEtrFormatted(""); // Clear ETR display
 
         if (resultsCollector.length > 0) {
             const totalDistance = resultsCollector.reduce((sum, r) => sum + r.distance, 0);
@@ -622,10 +653,11 @@ export default function TspSolverPage() {
 
             if (currentOptimalDistance !== null && currentOptimalDistance > 0) {
                 resultsCollector.forEach(r => {
+                    // Compare rounded distances if optimal is integer and SAS provides integers
                     if (Math.round(r.distance) === currentOptimalDistance) {
                         totalTimesOptimalFound++;
                     }
-                    const ratio = r.distance / currentOptimalDistance!;
+                    const ratio = r.distance / currentOptimalDistance!; // Use non-null asserted optimal distance
                     sumApproximationRatios += ratio;
                     validRatiosCount++;
                 });
@@ -633,15 +665,16 @@ export default function TspSolverPage() {
 
             if (resultsCollector.length > 0 && totalTimesOptimalFound > 0 && currentOptimalDistance !== null) {
                 const singleRunSuccessRate = totalTimesOptimalFound / resultsCollector.length;
-                if (singleRunSuccessRate > 0 && singleRunSuccessRate <=1) {
+                if (singleRunSuccessRate > 0 && singleRunSuccessRate <=1) { // Ensure valid probability
                     probOptimalInTenRuns = 1 - Math.pow(1 - singleRunSuccessRate, 10);
-                } else if (singleRunSuccessRate > 1) { 
+                } else if (singleRunSuccessRate > 1) { // Should not happen, but defensive
                     probOptimalInTenRuns = 1;
                 } else {
                     probOptimalInTenRuns = 0;
                 }
             }
             
+            // Ensure totalBatchTime uses the final elapsed time from the timer
             const finalBatchDuration = solverStartTimeRef.current > 0 ? Date.now() - solverStartTimeRef.current : totalBatchProcessingTime;
 
 
@@ -650,8 +683,8 @@ export default function TspSolverPage() {
                 minDistance,
                 maxDistance,
                 avgDistance: totalDistance / resultsCollector.length,
-                avgTimePerRun: totalBatchProcessingTime / resultsCollector.length,
-                totalBatchTime: finalBatchDuration,
+                avgTimePerRun: totalBatchProcessingTime / resultsCollector.length, // Based on sum of individual worker times
+                totalBatchTime: finalBatchDuration, // Based on overall timer for the batch operation
                 totalTimesOptimalFound,
                 avgApproximationRatio: validRatiosCount > 0 ? sumApproximationRatios / validRatiosCount : null,
                 probOptimalInTenRuns,
@@ -662,8 +695,9 @@ export default function TspSolverPage() {
 };
 
 
+  // Cleanup effect for worker and timer when component unmounts
   useEffect(() => {
-    return () => { 
+    return () => { // This is the cleanup function
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
@@ -671,9 +705,9 @@ export default function TspSolverPage() {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
       }
-      isBatchRunIntentActiveRef.current = false; 
+      isBatchRunIntentActiveRef.current = false; // Ensure intent is cleared on unmount
     };
-  }, []);
+  }, []); // Empty dependency array means this runs only on mount and unmount
 
   const approximationRatio = currentOptimalDistance && solverStats.bestDistance !== Infinity && currentOptimalDistance > 0
     ? (solverStats.bestDistance / currentOptimalDistance)
@@ -901,7 +935,7 @@ export default function TspSolverPage() {
                   <CardHeader>
                     <CardTitle className="text-xl flex items-center"><BarChartBig className="mr-2 h-5 w-5 text-primary"/>Batch Analysis Summary</CardTitle>
                      <CardDescription>
-                        Results for {batchInstanceName || 'Selected Instance'} (Max K: {batchMaxKUsed ?? 'N/A'}) from {aggregatedBatchStats.numberOfRuns} executions.
+                        Results for {batchInstanceName || 'Selected Instance'}{batchMaxKUsed !== null ? ` (Max K: ${batchMaxKUsed})` : ''} from {aggregatedBatchStats.numberOfRuns} executions.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -932,7 +966,7 @@ export default function TspSolverPage() {
                       <p className="text-lg font-bold">{aggregatedBatchStats.avgDistance.toFixed(2)}</p>
                     </div>
                      <div className="p-3 border rounded-md bg-muted/20">
-                      <h4 className="text-xs font-medium text-muted-foreground">Total Batch Time</h4>
+                      <CardTitle className="text-xs font-medium uppercase text-muted-foreground">Total Batch Time</CardTitle>
                       <p className="text-lg font-bold">{formatTime(aggregatedBatchStats.totalBatchTime)}</p>
                     </div>
                     <div className="p-3 border rounded-md bg-muted/20">
@@ -975,7 +1009,7 @@ export default function TspSolverPage() {
                   Solution Distribution Histogram
                 </CardTitle>
                 <CardDescription>
-                  Frequency of path lengths found in the batch run for {batchInstanceName || 'Selected Instance'} (Max K: {batchMaxKUsed ?? 'N/A'}).
+                  Frequency of path lengths found in the batch run for {batchInstanceName || 'Selected Instance'}{batchMaxKUsed !== null ? ` (Max K: ${batchMaxKUsed})` : ''}.
                 </CardDescription>
               </CardHeader>
               <CardContent>
