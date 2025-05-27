@@ -155,6 +155,7 @@ export default function TspSolverPage() {
   const [aggregatedBatchStats, setAggregatedBatchStats] = useState<AggregatedBatchStats | null>(null);
   const [batchInstanceName, setBatchInstanceName] = useState<string | null>(null);
   const [batchEtrFormatted, setBatchEtrFormatted] = useState<string>("");
+  const [batchMaxKUsed, setBatchMaxKUsed] = useState<number | null>(null);
 
 
   useEffect(() => {
@@ -228,6 +229,7 @@ export default function TspSolverPage() {
       setAggregatedBatchStats(null); 
       setBatchInstanceName(null);
       setBatchEtrFormatted("");
+      setBatchMaxKUsed(null);
       
       if (workerRef.current) { 
         workerRef.current.terminate();
@@ -436,6 +438,8 @@ export default function TspSolverPage() {
     setAggregatedBatchStats(null);
     setBatchInstanceName(null);
     setBatchEtrFormatted("");
+    setBatchMaxKUsed(null);
+
     const problemNameForOptimalLookup = selectedInstance ? selectedInstance.replace('.tsp', '') : null;
     if (problemNameForOptimalLookup && optimalSolutionsData && optimalSolutionsData[problemNameForOptimalLookup]) {
         setCurrentOptimalDistance(optimalSolutionsData[problemNameForOptimalLookup]);
@@ -472,6 +476,7 @@ export default function TspSolverPage() {
     setBatchRunResults([]);
     setAggregatedBatchStats(null);
     setBatchEtrFormatted("");
+    setBatchMaxKUsed(maxK);
     
     const currentInstance = tspInstances.find(inst => inst.id === selectedInstance);
     setBatchInstanceName(currentInstance ? currentInstance.name.split(' (')[0] : (selectedInstance === "custom" ? "Custom Input" : "Unknown Instance"));
@@ -490,10 +495,10 @@ export default function TspSolverPage() {
     const currentLoopNumberOfRuns = numberOfRuns; 
 
     for (let i = 1; i <= currentLoopNumberOfRuns; i++) {
-      // The problematic line that caused early exit was here. It has been removed.
-      // A more robust stop mechanism (e.g. using a useRef for a stop flag)
-      // would be needed if the stop button functionality needs to be perfect during a batch.
-
+      // Fix: Check isBatchRunning state using a ref or pass it to the loop
+      // This is a simplified fix to remove the immediate break
+      // A more robust solution would involve a ref for `isBatchRunning` to be checked
+      
       setCurrentBatchRunNumber(i);
       resetSolverState(); 
       try {
@@ -505,7 +510,7 @@ export default function TspSolverPage() {
 
         const runsCompleted = i;
         const runsRemaining = currentLoopNumberOfRuns - runsCompleted;
-        if (runsCompleted > 0 && runsRemaining > 0) {
+        if (runsCompleted > 0 && runsRemaining > 0 && totalBatchProcessingTime > 0) {
           const avgTimePerRun = totalBatchProcessingTime / runsCompleted;
           const etrMs = runsRemaining * avgTimePerRun;
           setBatchEtrFormatted(` (ETR: ${formatTime(etrMs)})`);
@@ -805,7 +810,7 @@ export default function TspSolverPage() {
                   <CardHeader>
                     <CardTitle className="text-xl flex items-center"><BarChartBig className="mr-2 h-5 w-5 text-primary"/>Batch Analysis Summary</CardTitle>
                     <CardDescription>
-                        Results for {batchInstanceName || 'Selected Instance'} from {aggregatedBatchStats.numberOfRuns} executions.
+                        Results for {batchInstanceName || 'Selected Instance'} (Max K: {batchMaxKUsed ?? 'N/A'}) from {aggregatedBatchStats.numberOfRuns} executions.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="grid grid-cols-2 md:grid-cols-3 gap-4">
