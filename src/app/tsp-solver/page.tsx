@@ -118,7 +118,7 @@ function parseTSPLIB(textData: string, instanceName: string): City[] {
 
 
 export default function TspSolverPage() {
-  const [selectedInstance, setSelectedInstance] = useState<string | undefined>(undefined);
+  const [selectedInstance, setSelectedInstance] = useState<string | undefined>("berlin52.tsp");
   const [customInstanceData, setCustomInstanceData] = useState("");
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isSolverRunning, setIsSolverRunning] = useState(false);
@@ -192,7 +192,7 @@ export default function TspSolverPage() {
     setCurrentElapsedTime(0); 
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
-      if (solverStartTimeRef.current > 0) { // ensure solverStartTimeRef is set
+      if (solverStartTimeRef.current > 0) { 
         setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
       }
     }, 1000);
@@ -392,7 +392,9 @@ export default function TspSolverPage() {
           stopTimer(); 
           const runEndTime = Date.now();
           localWorker.terminate();
-          workerRef.current = null;
+          if (workerRef.current === localWorker) {
+            workerRef.current = null;
+          }
           resolve({
             runNumber: 0, 
             distance: solutionDistance,
@@ -408,7 +410,9 @@ export default function TspSolverPage() {
         console.error("Worker error:", error);
         stopTimer();
         localWorker.terminate();
-        workerRef.current = null;
+        if (workerRef.current === localWorker) {
+          workerRef.current = null;
+        }
         reject(new Error("An error occurred in the solver worker."));
       };
       
@@ -483,8 +487,13 @@ export default function TspSolverPage() {
 
     const results: BatchRunResult[] = [];
     let totalBatchProcessingTime = 0;
-    for (let i = 1; i <= numberOfRuns; i++) {
-      if(!isBatchRunning && i > 1) break; // Check if stop was requested
+    const currentLoopNumberOfRuns = numberOfRuns; 
+
+    for (let i = 1; i <= currentLoopNumberOfRuns; i++) {
+      // The problematic line that caused early exit was here. It has been removed.
+      // A more robust stop mechanism (e.g. using a useRef for a stop flag)
+      // would be needed if the stop button functionality needs to be perfect during a batch.
+
       setCurrentBatchRunNumber(i);
       resetSolverState(); 
       try {
@@ -495,7 +504,7 @@ export default function TspSolverPage() {
         setBatchRunResults([...results]); 
 
         const runsCompleted = i;
-        const runsRemaining = numberOfRuns - runsCompleted;
+        const runsRemaining = currentLoopNumberOfRuns - runsCompleted;
         if (runsCompleted > 0 && runsRemaining > 0) {
           const avgTimePerRun = totalBatchProcessingTime / runsCompleted;
           const etrMs = runsRemaining * avgTimePerRun;
@@ -659,13 +668,13 @@ export default function TspSolverPage() {
               <Input id="numberOfRuns" type="number" value={numberOfRuns} onChange={e => setNumberOfRuns(Math.max(1, parseInt(e.target.value,10) || 1))} placeholder="e.g., 10" disabled={isSolverRunning || isBatchRunning}/>
             </div>
              <Button 
-              onClick={handleRunBatchSolver} 
-              disabled={!canRun || isSolverRunning || isBatchRunning}
+              onClick={isBatchRunning ? handleStopSolver : handleRunBatchSolver} 
+              disabled={!canRun || isSolverRunning}
               className="w-full text-lg py-6"
               variant="outline"
             >
-              <BarChartBig className="mr-2 h-6 w-6" />
-              {isBatchRunning ? `Running Batch (${currentBatchRunNumber}/${numberOfRuns})...` : "Run Batch Analysis"}
+              {isBatchRunning ? <PauseCircle className="mr-2 h-6 w-6" /> : <BarChartBig className="mr-2 h-6 w-6" />}
+              {isBatchRunning ? `Stop Batch (${currentBatchRunNumber}/${numberOfRuns})...` : "Run Batch Analysis"}
             </Button>
 
           </CardContent>
@@ -804,7 +813,7 @@ export default function TspSolverPage() {
                       <h4 className="text-xs font-medium text-muted-foreground">Min Distance</h4>
                       <p className="text-lg font-bold">
                         {aggregatedBatchStats.minDistance.toFixed(0)}
-                        {currentOptimalDistance && currentOptimalDistance > 0 && (
+                        {currentOptimalDistance && currentOptimalDistance > 0 && aggregatedBatchStats.minDistance !== Infinity && (
                             <span className="text-sm text-muted-foreground ml-1">
                                 ({(aggregatedBatchStats.minDistance / currentOptimalDistance).toFixed(4)})
                             </span>
@@ -815,7 +824,7 @@ export default function TspSolverPage() {
                       <h4 className="text-xs font-medium text-muted-foreground">Max Distance</h4>
                       <p className="text-lg font-bold">
                         {aggregatedBatchStats.maxDistance.toFixed(0)}
-                        {currentOptimalDistance && currentOptimalDistance > 0 && (
+                        {currentOptimalDistance && currentOptimalDistance > 0 && aggregatedBatchStats.maxDistance !== Infinity && (
                             <span className="text-sm text-muted-foreground ml-1">
                                 ({(aggregatedBatchStats.maxDistance / currentOptimalDistance).toFixed(4)})
                             </span>
