@@ -7,8 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, PauseCircle, Target, Percent, BarChartBig, Activity, FileCog, TrendingUp, Timer } from "lucide-react";
+import { Waypoints, PlayCircle, Settings, Clock, Route, ListTree, CheckCircle, PauseCircle, Target, Percent, BarChartBig, Activity, FileCog, Timer, BarChart as BarChartIcon } from "lucide-react"; // Added BarChartIcon
 import { useState, useEffect, useRef } from "react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart";
+
 
 interface City {
   id: string | number;
@@ -47,6 +50,11 @@ interface AggregatedBatchStats {
   totalTimesOptimalFound: number;
   avgApproximationRatio: number | null;
   probOptimalInTenRuns: number | null;
+}
+
+interface HistogramBin {
+  range: string;
+  count: number;
 }
 
 
@@ -156,6 +164,7 @@ export default function TspSolverPage() {
   const [batchInstanceName, setBatchInstanceName] = useState<string | null>(null);
   const [batchEtrFormatted, setBatchEtrFormatted] = useState<string>("");
   const [batchMaxKUsed, setBatchMaxKUsed] = useState<number | null>(null);
+  const [histogramData, setHistogramData] = useState<HistogramBin[] | null>(null);
 
 
   useEffect(() => {
@@ -227,6 +236,7 @@ export default function TspSolverPage() {
       setCities([]); 
       resetSolverState();
       setAggregatedBatchStats(null); 
+      setHistogramData(null);
       setBatchInstanceName(null);
       setBatchEtrFormatted("");
       setBatchMaxKUsed(null);
@@ -436,6 +446,7 @@ export default function TspSolverPage() {
     setErrorMessage(null);
     resetSolverState(); 
     setAggregatedBatchStats(null);
+    setHistogramData(null);
     setBatchInstanceName(null);
     setBatchEtrFormatted("");
     setBatchMaxKUsed(null);
@@ -468,6 +479,50 @@ export default function TspSolverPage() {
     stopTimer();
   };
 
+  const prepareHistogramData = (results: BatchRunResult[], numBins: number = 15): HistogramBin[] => {
+    if (results.length === 0) return [];
+
+    const distances = results.map(r => r.distance);
+    const minVal = Math.min(...distances);
+    const maxVal = Math.max(...distances);
+
+    if (minVal === maxVal) {
+      return [{ range: `${minVal}`, count: distances.length }];
+    }
+
+    const binWidth = Math.max(1, Math.ceil((maxVal - minVal + 1) / numBins));
+    const bins: HistogramBin[] = [];
+    
+    let currentBinStart = Math.floor(minVal / binWidth) * binWidth;
+    if (currentBinStart > minVal) currentBinStart -= binWidth; // ensure minVal is in first bin
+
+    for (let i = 0; i < numBins ; i++) {
+        const binStart = currentBinStart + (i * binWidth);
+        const binEnd = binStart + binWidth -1;
+
+        if (binStart > maxVal && bins.length > 0) break; 
+
+        const count = distances.filter(d => d >= binStart && d <= binEnd).length;
+        
+        let rangeLabel = `${binStart}-${binEnd}`;
+        if (binWidth === 1) rangeLabel = `${binStart}`;
+
+        bins.push({
+          range: rangeLabel,
+          count: count,
+        });
+        if (binEnd >= maxVal) break; 
+    }
+    
+    // Consolidate bins if too many are empty or if total bins are too many
+    const significantBins = bins.filter(b => b.count > 0);
+    if (significantBins.length > numBins * 1.5 && significantBins.length > 5) { // If too many sparse bins, try fewer bins
+        return prepareHistogramData(results, Math.max(5, Math.floor(numBins / 2)));
+    }
+    
+    return bins;
+  };
+
   const handleRunBatchSolver = async () => {
     if (isBatchRunning || cities.length === 0 || isSolverRunning || numberOfRuns <= 0) return;
 
@@ -475,6 +530,7 @@ export default function TspSolverPage() {
     setErrorMessage(null);
     setBatchRunResults([]);
     setAggregatedBatchStats(null);
+    setHistogramData(null);
     setBatchEtrFormatted("");
     setBatchMaxKUsed(maxK);
     
@@ -495,10 +551,10 @@ export default function TspSolverPage() {
     const currentLoopNumberOfRuns = numberOfRuns; 
 
     for (let i = 1; i <= currentLoopNumberOfRuns; i++) {
-      // Fix: Check isBatchRunning state using a ref or pass it to the loop
-      // This is a simplified fix to remove the immediate break
-      // A more robust solution would involve a ref for `isBatchRunning` to be checked
-      
+      if (!isBatchRunning && i > 1) { // Check if stop was requested
+          setErrorMessage("Batch run stopped by user.");
+          break;
+      }
       setCurrentBatchRunNumber(i);
       resetSolverState(); 
       try {
@@ -569,6 +625,7 @@ export default function TspSolverPage() {
         avgApproximationRatio: validRatiosCount > 0 ? sumApproximationRatios / validRatiosCount : null,
         probOptimalInTenRuns,
       });
+      setHistogramData(prepareHistogramData(results));
     }
 
     setIsBatchRunning(false);
@@ -592,6 +649,8 @@ export default function TspSolverPage() {
     : null;
 
   const canRun = !isLoadingData && cities.length > 0;
+  const chartConfigSolutions = { solutions: { label: "Solutions", color: "hsl(var(--chart-1))" } };
+
 
   return (
     <div className="container mx-auto py-8 px-4 md:px-6">
@@ -685,7 +744,7 @@ export default function TspSolverPage() {
           </CardContent>
         </Card>
 
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 space-y-8">
           <Card className="shadow-lg min-h-[500px]">
             <CardHeader>
               <CardTitle className="text-2xl">Solution Visualization & Results</CardTitle>
@@ -809,7 +868,7 @@ export default function TspSolverPage() {
                 <Card className="shadow-md">
                   <CardHeader>
                     <CardTitle className="text-xl flex items-center"><BarChartBig className="mr-2 h-5 w-5 text-primary"/>Batch Analysis Summary</CardTitle>
-                    <CardDescription>
+                     <CardDescription>
                         Results for {batchInstanceName || 'Selected Instance'} (Max K: {batchMaxKUsed ?? 'N/A'}) from {aggregatedBatchStats.numberOfRuns} executions.
                     </CardDescription>
                   </CardHeader>
@@ -875,6 +934,35 @@ export default function TspSolverPage() {
 
             </CardContent>
           </Card>
+
+          {aggregatedBatchStats && histogramData && histogramData.length > 0 && (
+            <Card className="shadow-lg">
+              <CardHeader>
+                <CardTitle className="text-xl flex items-center">
+                  <BarChartIcon className="mr-2 h-5 w-5 text-primary" />
+                  Solution Distribution Histogram
+                </CardTitle>
+                <CardDescription>
+                  Frequency of path lengths found in the batch run for {batchInstanceName || 'Selected Instance'} (Max K: {batchMaxKUsed ?? 'N/A'}).
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ChartContainer config={chartConfigSolutions} className="h-[350px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={histogramData} margin={{ top: 5, right: 30, left: 0, bottom: 40 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="range" angle={-45} textAnchor="end" height={70} interval={0} />
+                      <YAxis allowDecimals={false} label={{ value: 'Frequency', angle: -90, position: 'insideLeft' }} />
+                      <Tooltip content={<ChartTooltipContent />} />
+                      <Legend verticalAlign="top" />
+                      <Bar dataKey="count" fill="var(--color-solutions)" name="Solutions in Range" radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartContainer>
+              </CardContent>
+            </Card>
+          )}
+
         </div>
       </div>
     </div>
