@@ -1,6 +1,7 @@
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowRight, BookOpen, BrainCircuit, Waypoints } from "lucide-react";
+import { ArrowRight, BookOpen, BrainCircuit, Waypoints, Zap } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -12,15 +13,18 @@ export default function HomePage() {
           Welcome to SAS Solver Suite
         </h1>
         <p className="text-lg md:text-xl text-muted-foreground max-w-3xl mx-auto">
-          Explore the Systematic Alternatives Search (SAS) meta-algorithm, run experiments, and analyze performance for NP-hard problems.
+          Explore the Systematic Alternatives Search (SAS) meta-algorithm, run experiments, and analyze its impressive performance on NP-hard problems.
         </p>
       </header>
 
       <div className="grid md:grid-cols-2 gap-8 mb-12 items-center">
         <div>
           <h2 className="text-3xl font-semibold mb-4">What is SAS?</h2>
+          <p className="text-muted-foreground mb-3 text-lg">
+            Systematic Alternatives Search (SAS) is an innovative meta-algorithm designed for tackling complex NP-hard optimization problems. It intelligently combines systematic exploration of deviation from local heuristics with adaptive, learning-based mechanisms.
+          </p>
           <p className="text-muted-foreground mb-6 text-lg">
-            Systematic Alternatives Search (SAS) is a novel meta-algorithm designed for tackling complex NP-hard optimization problems. It combines systematic exploration with learned heuristics to efficiently find high-quality solutions.
+            SAS has demonstrated remarkable efficiency, finding optimal solutions for challenging TSP instances like 'berlin52' and 'eil76' in seconds, with excellent average approximation ratios.
           </p>
           <Button asChild size="lg">
             <Link href="/documentation">
@@ -31,11 +35,11 @@ export default function HomePage() {
         <div>
           <Image
             src="https://placehold.co/600x400.png"
-            alt="Abstract representation of SAS algorithm"
+            alt="Abstract representation of the SAS algorithm's search path"
             width={600}
             height={400}
             className="rounded-lg shadow-xl object-cover"
-            data-ai-hint="abstract algorithm"
+            data-ai-hint="abstract algorithm network"
           />
         </div>
       </div>
@@ -46,11 +50,11 @@ export default function HomePage() {
           <Card className="hover:shadow-lg transition-shadow">
             <CardHeader>
               <Waypoints className="h-10 w-10 text-primary mb-2" />
-              <CardTitle>TSP Solver</CardTitle>
+              <CardTitle>TSP Solver & Analyzer</CardTitle>
             </CardHeader>
             <CardContent>
               <CardDescription>
-                Visualize SAS solving Traveling Salesman Problem instances. Input your data and see the algorithm in action.
+                Visualize SAS solving TSP instances. Input data, configure parameters like 'K', run batch analyses, and compare results against known optima.
               </CardDescription>
             </CardContent>
             <CardFooter>
@@ -67,7 +71,7 @@ export default function HomePage() {
             </CardHeader>
             <CardContent>
               <CardDescription>
-                Leverage AI to analyze benchmark data and estimate performance functions for the SAS algorithm.
+                Leverage generative AI to analyze benchmark data and estimate performance functions for algorithms like SAS.
               </CardDescription>
             </CardContent>
             <CardFooter>
@@ -84,7 +88,7 @@ export default function HomePage() {
             </CardHeader>
             <CardContent>
               <CardDescription>
-                Dive deep into the SAS algorithm, its parameters, and applications through interactive documentation.
+                Dive deep into the SAS algorithm, its core concepts, parameters, usage guide, and insights from observed performance.
               </CardDescription>
             </CardContent>
             <CardFooter>
