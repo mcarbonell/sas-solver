@@ -153,6 +153,7 @@ export default function TspSolverPage() {
   const [currentBatchRunNumber, setCurrentBatchRunNumber] = useState(0);
   const [batchRunResults, setBatchRunResults] = useState<BatchRunResult[]>([]);
   const [aggregatedBatchStats, setAggregatedBatchStats] = useState<AggregatedBatchStats | null>(null);
+  const [batchInstanceName, setBatchInstanceName] = useState<string | null>(null);
 
 
   useEffect(() => {
@@ -222,7 +223,8 @@ export default function TspSolverPage() {
       setErrorMessage(null);
       setCities([]); 
       resetSolverState();
-      setAggregatedBatchStats(null); // Reset batch stats when instance changes
+      setAggregatedBatchStats(null); 
+      setBatchInstanceName(null);
       
       if (workerRef.current) { 
         workerRef.current.terminate();
@@ -423,8 +425,9 @@ export default function TspSolverPage() {
 
     setIsSolverRunning(true);
     setErrorMessage(null);
-    resetSolverState(); // Reset stats before running
+    resetSolverState(); 
     setAggregatedBatchStats(null);
+    setBatchInstanceName(null);
     const problemNameForOptimalLookup = selectedInstance ? selectedInstance.replace('.tsp', '') : null;
     if (problemNameForOptimalLookup && optimalSolutionsData && optimalSolutionsData[problemNameForOptimalLookup]) {
         setCurrentOptimalDistance(optimalSolutionsData[problemNameForOptimalLookup]);
@@ -458,6 +461,11 @@ export default function TspSolverPage() {
     setErrorMessage(null);
     setBatchRunResults([]);
     setAggregatedBatchStats(null);
+    
+    const currentInstance = tspInstances.find(inst => inst.id === selectedInstance);
+    setBatchInstanceName(currentInstance ? currentInstance.name.split(' (')[0] : (selectedInstance === "custom" ? "Custom Input" : "Unknown Instance"));
+
+
     const problemNameForOptimalLookup = selectedInstance ? selectedInstance.replace('.tsp', '') : null;
      if (problemNameForOptimalLookup && optimalSolutionsData && optimalSolutionsData[problemNameForOptimalLookup]) {
         setCurrentOptimalDistance(optimalSolutionsData[problemNameForOptimalLookup]);
@@ -470,24 +478,21 @@ export default function TspSolverPage() {
     let totalBatchProcessingTime = 0;
     for (let i = 1; i <= numberOfRuns; i++) {
       setCurrentBatchRunNumber(i);
-      resetSolverState(); // Reset for each run in batch
+      resetSolverState(); 
       try {
         // eslint-disable-next-line no-await-in-loop
         const result = await runSingleSolverInstance();
         results.push({ ...result, runNumber: i });
         totalBatchProcessingTime += result.time;
-        setBatchRunResults([...results]); // Update state incrementally
+        setBatchRunResults([...results]); 
       } catch (error: any) {
         setErrorMessage(`Error in batch run ${i}: ${error.message}`);
-        // Optionally stop batch or continue
         break; 
       }
     }
 
-    // Calculate aggregated stats
     if (results.length > 0) {
       const totalDistance = results.reduce((sum, r) => sum + r.distance, 0);
-      // totalTime is already the sum of individual run times (totalBatchProcessingTime)
       const minDistance = Math.min(...results.map(r => r.distance));
       const maxDistance = Math.max(...results.map(r => r.distance));
       let totalTimesOptimalFound = 0;
@@ -497,7 +502,7 @@ export default function TspSolverPage() {
 
       if (currentOptimalDistance !== null && currentOptimalDistance > 0) {
         results.forEach(r => {
-          if (Math.round(r.distance) === currentOptimalDistance) { // Compare rounded distance for safety
+          if (Math.round(r.distance) === currentOptimalDistance) { 
             totalTimesOptimalFound++;
           }
           const ratio = r.distance / currentOptimalDistance!;
@@ -508,9 +513,9 @@ export default function TspSolverPage() {
       
       if (results.length > 0 && totalTimesOptimalFound > 0 && currentOptimalDistance !== null) {
         const singleRunSuccessRate = totalTimesOptimalFound / results.length;
-        if (singleRunSuccessRate > 0 && singleRunSuccessRate <=1) { // Ensure rate is valid
+        if (singleRunSuccessRate > 0 && singleRunSuccessRate <=1) { 
           probOptimalInTenRuns = 1 - Math.pow(1 - singleRunSuccessRate, 10);
-        } else if (singleRunSuccessRate > 1) { // Should not happen, but as a fallback
+        } else if (singleRunSuccessRate > 1) { 
           probOptimalInTenRuns = 1;
         } else {
           probOptimalInTenRuns = 0;
@@ -769,7 +774,9 @@ export default function TspSolverPage() {
                 <Card className="shadow-md">
                   <CardHeader>
                     <CardTitle className="text-xl flex items-center"><BarChartBig className="mr-2 h-5 w-5 text-primary"/>Batch Analysis Summary</CardTitle>
-                    <CardDescription>Results from {aggregatedBatchStats.numberOfRuns} executions.</CardDescription>
+                    <CardDescription>
+                        Results for {batchInstanceName || 'Selected Instance'} from {aggregatedBatchStats.numberOfRuns} executions.
+                    </CardDescription>
                   </CardHeader>
                   <CardContent className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     <div className="p-3 border rounded-md bg-muted/20">
