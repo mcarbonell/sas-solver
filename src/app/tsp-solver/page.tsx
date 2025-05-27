@@ -178,7 +178,7 @@ export default function TspSolverPage() {
         setOptimalSolutionsData(data);
       } catch (error) {
         console.error("Error fetching optimal solutions:", error);
-        setOptimalSolutionsData({});
+        setOptimalSolutionsData({}); // Set to empty object on error to prevent re-fetching indefinitely
       }
     };
     fetchOptimalSolutions();
@@ -217,18 +217,16 @@ export default function TspSolverPage() {
         setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
     }
   };
-
+  
   const resetSolverState = (fullResetForNewInstance = false) => {
-    if (timerIntervalRef.current && (fullResetForNewInstance || !isBatchRunning)) { // Only fully stop timer if not in a batch or full reset
-      clearInterval(timerIntervalRef.current);
-      timerIntervalRef.current = null;
-      solverStartTimeRef.current = 0;
-      setCurrentElapsedTime(0);
-    } else if (!isBatchRunning) { // If not a batch run, reset time
+    if (fullResetForNewInstance || (!isSolverRunning && !isBatchRunning)) { // Only fully stop timer if not in a batch or full reset and not actively running
+        if (timerIntervalRef.current) {
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = null;
+        }
         solverStartTimeRef.current = 0;
-        setCurrentElapsedTime(0);
+        setCurrentElapsedTime(0); // Directly reset to 0 ms
     }
-
 
     setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
     setBestRoute([]);
@@ -236,32 +234,38 @@ export default function TspSolverPage() {
     if (fullResetForNewInstance) {
       setErrorMessage(null);
       setCities([]);
-      setAggregatedBatchStats(null);
-      setHistogramData(null);
-      setBatchInstanceName(null);
+      // Keep batch results if a new instance is loaded *during* or *after* a batch for review
+      // setAggregatedBatchStats(null); 
+      // setHistogramData(null);
+      // setBatchInstanceName(null);
       setBatchEtrFormatted("");
-      setBatchMaxKUsed(null);
-      setBatchRunResults([]);
+      // setBatchMaxKUsed(null);
+      // setBatchRunResults([]); // Potentially keep this for review too
     }
   };
 
 
-  useEffect(() => {
-    const loadInstance = async () => {
+ useEffect(() => {
+    // Effect for loading city data when selectedInstance or customInstanceData changes.
+    // This effect handles cleanup of solver state if instance changes.
+    const loadInstanceData = async () => {
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
       }
       setIsSolverRunning(false);
-      setIsBatchRunning(false);
-      resetSolverState(true);
+      setIsBatchRunning(false); // Stop any ongoing batch
+      resetSolverState(true); // Full reset for new instance
+
+      let newCities: City[] = [];
+      let errorMsg: string | null = null;
 
       if (selectedInstance && selectedInstance !== "custom") {
         setIsLoadingData(true);
         try {
           const response = await fetch(`/api/tsp-instance?name=${selectedInstance}`);
           if (!response.ok) {
-             const errorData = await response.json().catch(() => ({error: `Failed to fetch TSP instance: ${selectedInstance} (status: ${response.status})`}));
+            const errorData = await response.json().catch(() => ({ error: `Failed to fetch TSP instance: ${selectedInstance} (status: ${response.status})` }));
             throw new Error(errorData.error || `Failed to fetch TSP instance: ${selectedInstance} (status: ${response.status})`);
           }
           const text = await response.text();
@@ -269,11 +273,10 @@ export default function TspSolverPage() {
           if (parsedCities.length === 0) {
             throw new Error(`No coordinates found in ${selectedInstance}. Check file format or NODE_COORD_SECTION.`);
           }
-          setCities(parsedCities);
+          newCities = parsedCities;
         } catch (error: any) {
           console.error("Error loading TSP instance:", error);
-          setCities([]);
-          setErrorMessage(error.message || "Could not load or parse TSP file.");
+          errorMsg = error.message || "Could not load or parse TSP file.";
         } finally {
           setIsLoadingData(false);
         }
@@ -281,28 +284,31 @@ export default function TspSolverPage() {
         setIsLoadingData(true);
         try {
           const parsedCities = parseTSPLIB(customInstanceData, "Custom Input");
-           if (parsedCities.length === 0 && customInstanceData.trim() !== "") {
+          if (parsedCities.length === 0 && customInstanceData.trim() !== "") {
             throw new Error(`No coordinates found in custom data. Ensure data is in a recognized TSPLIB format.`);
           }
-          setCities(parsedCities);
+          newCities = parsedCities;
         } catch (error: any) {
           console.error("Error parsing custom TSP data:", error);
-          setCities([]);
-          setErrorMessage(error.message || "Could not parse custom TSP data.");
+          errorMsg = error.message || "Could not parse custom TSP data.";
         } finally {
           setIsLoadingData(false);
         }
       } else {
-        setCities([]);
-        setIsLoadingData(false);
+         newCities = [];
       }
+      setCities(newCities);
+      setErrorMessage(errorMsg);
     };
-    loadInstance();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    loadInstanceData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedInstance, customInstanceData]);
 
 
   useEffect(() => {
+    // Effect for updating currentOptimalDistance when cities or optimalSolutionsData change.
+    // This does NOT interfere with solver/batch running state.
     let problemNameForOptimalLookup: string | null = null;
     if (selectedInstance && selectedInstance !== "custom") {
       problemNameForOptimalLookup = selectedInstance.replace('.tsp', '');
@@ -390,20 +396,17 @@ export default function TspSolverPage() {
   const runSingleSolverInstance = (): Promise<BatchRunResult> => {
     return new Promise((resolve, reject) => {
       try {
-        // Ensure workerRef is clean before this run claims it.
-        // This primarily handles scenarios like a manual stop then immediate restart,
-        // or if a previous worker instance somehow wasn't fully cleaned up.
         if (workerRef.current) {
           console.warn("runSingleSolverInstance: workerRef.current was not null, terminating existing worker.");
-          workerRef.current.terminate();
+          workerRef.current.terminate(); // Terminate any existing worker first
           workerRef.current = null;
         }
 
         const localWorker = new Worker('/solve-worker.js');
-        workerRef.current = localWorker; // This run's worker now owns the ref
+        workerRef.current = localWorker;
 
         const runStartTime = Date.now();
-        if (!isBatchRunning) { // Timer logic for single (non-batch) runs
+        if (!isBatchRunning) {
             startTimer();
         }
 
@@ -424,21 +427,16 @@ export default function TspSolverPage() {
           }
 
           if (type === 'solution') {
-            if (!isBatchRunning) { // Stop component's main timer only for single runs
+            if (!isBatchRunning) {
               stopTimer();
             }
             const runEndTime = Date.now();
             localWorker.terminate();
-            if (workerRef.current === localWorker) { // Clean up ref if it's still this worker
+            if (workerRef.current === localWorker) { 
               workerRef.current = null;
-            } else if (workerRef.current) {
-              // This case implies workerRef.current was changed by something else (e.g. user clicked stop then start again quickly)
-              // The new worker would have already terminated the one in workerRef.current.
-              // Or this is a late message from an old worker that handleStopSolver tried to terminate.
-              console.warn("runSingleSolverInstance: workerRef.current was not this localWorker on solution, but ref was not null.");
             }
             resolve({
-              runNumber: 0, // Placeholder, overridden by batch runner
+              runNumber: 0,
               distance: solutionDistance,
               time: runEndTime - runStartTime,
               iterations: iteration,
@@ -454,15 +452,18 @@ export default function TspSolverPage() {
               stopTimer();
           }
           localWorker.terminate();
-          if (workerRef.current === localWorker) { // Clean up ref
+           if (workerRef.current === localWorker) {
             workerRef.current = null;
           }
-          reject(new Error(`Worker error from onerror: ${error.message || 'Unknown worker error'}`));
+          reject(new Error(`Worker error: ${error.message || 'Unknown worker error'}`));
         };
 
         const citiesForWorker: CityPoint[] = cities.map(c => ({ x: c.x, y: c.y }));
         if (!citiesForWorker || citiesForWorker.length === 0) {
-            throw new Error("Cannot start worker: cities list is empty.");
+           localWorker.terminate(); // Clean up the worker if we can't proceed
+           if (workerRef.current === localWorker) workerRef.current = null;
+           reject(new Error("Cannot start worker: cities list is empty."));
+           return;
         }
         localWorker.postMessage({
           type: 'start',
@@ -474,11 +475,11 @@ export default function TspSolverPage() {
 
       } catch (promiseSetupError: any) {
         console.error("Error setting up worker promise in runSingleSolverInstance:", promiseSetupError);
-        if (workerRef.current) { // Ensure cleanup if worker was created before error
+        if (workerRef.current) {
             workerRef.current.terminate();
             workerRef.current = null;
         }
-        reject(new Error(`Failed to initialize worker for run: ${promiseSetupError.message || 'Unknown setup error'}`));
+        reject(new Error(`Failed to initialize worker: ${promiseSetupError.message || 'Unknown setup error'}`));
       }
     });
   };
@@ -488,7 +489,7 @@ export default function TspSolverPage() {
 
     setIsSolverRunning(true);
     setErrorMessage(null);
-    resetSolverState(false); // Reset solver stats, not a full instance reset
+    resetSolverState(false);
     setAggregatedBatchStats(null);
     setHistogramData(null);
     setBatchInstanceName(null);
@@ -501,7 +502,6 @@ export default function TspSolverPage() {
       setErrorMessage(error.message || "Solver run failed.");
     } finally {
       setIsSolverRunning(false);
-      // Timer is stopped inside runSingleSolverInstance for single runs
     }
   };
 
@@ -511,8 +511,8 @@ export default function TspSolverPage() {
       workerRef.current = null;
     }
     setIsSolverRunning(false);
-    setIsBatchRunning(false);
-    setBatchEtrFormatted("");
+    setIsBatchRunning(false); // Ensure batch running is also false
+    setBatchEtrFormatted(""); // Clear ETR
     stopTimer();
   };
 
@@ -550,16 +550,20 @@ export default function TspSolverPage() {
               count: count,
             });
         }
-        if (binEnd >= maxVal || bins.length >= numBins * 2) break;
+        if (binEnd >= maxVal || bins.length >= numBins * 2) break; // Safety break
     }
-
+    
+    // Attempt to make bin ranges more dynamic based on actual data spread
     let significantBins = bins.filter(b => b.count > 0);
-    if (significantBins.length === 0 && bins.length > 0) significantBins = [bins[0]];
+    if (significantBins.length === 0 && bins.length > 0) significantBins = [bins[0]]; // Ensure at least one bin if data exists
 
-    if (significantBins.length > numBins * 1.5 && significantBins.length > 5) {
-        return prepareHistogramData(results, Math.max(5, Math.floor(numBins / 1.5)));
+    // Heuristic to reduce bins if too sparse or too many compared to distinct values
+    const distinctValues = new Set(distances).size;
+    if (significantBins.length > numBins * 1.5 && significantBins.length > Math.min(5, distinctValues) ) {
+        // If too many significant bins, try to re-bin with fewer target bins.
+        // This can happen if binWidth is too small (e.g., 1) for a wide range of values.
+        return prepareHistogramData(results, Math.max(Math.min(5, distinctValues), Math.floor(numBins / 1.5)));
     }
-
     return bins;
   };
 
@@ -568,8 +572,8 @@ export default function TspSolverPage() {
 
     setIsBatchRunning(true);
     setErrorMessage(null);
-    const tempBatchResults: BatchRunResult[] = []; // Use a local array for accumulation
-    setBatchRunResults(tempBatchResults); // Initialize with empty array
+    const tempBatchResults: BatchRunResult[] = [];
+    setBatchRunResults(tempBatchResults);
     setAggregatedBatchStats(null);
     setHistogramData(null);
     setBatchEtrFormatted("");
@@ -578,22 +582,32 @@ export default function TspSolverPage() {
     const currentTSPInstance = tspInstances.find(inst => inst.id === selectedInstance);
     setBatchInstanceName(currentTSPInstance ? currentTSPInstance.name.split(' (')[0] : (selectedInstance === "custom" ? "Custom Input" : "Unknown Instance"));
 
-
     const results: BatchRunResult[] = [];
     let totalBatchProcessingTime = 0;
-    const currentLoopNumberOfRuns = numberOfRuns;
+    const currentLoopNumberOfRuns = numberOfRuns; // Capture at start of batch
 
-    startTimer(); // Start timer for the entire batch
+    startTimer();
 
     for (let i = 1; i <= currentLoopNumberOfRuns; i++) {
+       if (!isBatchRunning && i > 1) { // Check if user stopped batch mid-way more reliably
+           setErrorMessage("Batch run stopped by user.");
+           break;
+       }
       setCurrentBatchRunNumber(i);
-      resetSolverState(false); // Reset solver stats for this individual run, but not full instance reset
+      resetSolverState(false); 
       try {
         // eslint-disable-next-line no-await-in-loop
         const result = await runSingleSolverInstance();
+        if (!isBatchRunning && i <= currentLoopNumberOfRuns) { // Check again if stopped during the run
+            setErrorMessage("Batch run stopped by user after current run completed.");
+            results.push({ ...result, runNumber: i }); // Store the last completed run
+            totalBatchProcessingTime += result.time;
+            setBatchRunResults([...results]);
+            break;
+        }
         results.push({ ...result, runNumber: i });
         totalBatchProcessingTime += result.time;
-        setBatchRunResults([...results]);
+        setBatchRunResults([...results]); // Update UI with current list of results
 
         const runsCompleted = i;
         const runsRemaining = currentLoopNumberOfRuns - runsCompleted;
@@ -608,11 +622,11 @@ export default function TspSolverPage() {
       } catch (error: any) {
         setErrorMessage(`Error in batch run ${i}: ${error.message || 'Unknown error'}`);
         setBatchEtrFormatted("");
-        break;
+        break; // Stop batch on error
       }
     }
 
-    stopTimer();
+    stopTimer(); // This will also call setCurrentElapsedTime with the final duration.
     setBatchEtrFormatted("");
 
     if (results.length > 0) {
@@ -639,13 +653,14 @@ export default function TspSolverPage() {
         const singleRunSuccessRate = totalTimesOptimalFound / results.length;
         if (singleRunSuccessRate > 0 && singleRunSuccessRate <=1) {
           probOptimalInTenRuns = 1 - Math.pow(1 - singleRunSuccessRate, 10);
-        } else if (singleRunSuccessRate > 1) {
+        } else if (singleRunSuccessRate > 1) { // Should not happen, but as a guard
           probOptimalInTenRuns = 1;
         } else {
           probOptimalInTenRuns = 0;
         }
       }
 
+      const finalBatchDuration = solverStartTimeRef.current > 0 ? Date.now() - solverStartTimeRef.current : 0;
 
       setAggregatedBatchStats({
         numberOfRuns: results.length,
@@ -653,7 +668,7 @@ export default function TspSolverPage() {
         maxDistance,
         avgDistance: totalDistance / results.length,
         avgTimePerRun: totalBatchProcessingTime / results.length,
-        totalBatchTime: currentElapsedTime,
+        totalBatchTime: finalBatchDuration,
         totalTimesOptimalFound,
         avgApproximationRatio: validRatiosCount > 0 ? sumApproximationRatios / validRatiosCount : null,
         probOptimalInTenRuns,
@@ -667,13 +682,7 @@ export default function TspSolverPage() {
 
 
   useEffect(() => {
-    // Effect for instance loading and cleanup
-    const loadEffectInstance = async () => {
-        // This logic is now in the main loadInstance useEffect
-    };
-    // loadEffectInstance(); // No need to call it here, handled by dependency change
-
-    return () => { // Cleanup function for component unmount or when dependencies change before next effect run
+    return () => { 
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
@@ -682,7 +691,7 @@ export default function TspSolverPage() {
         clearInterval(timerIntervalRef.current);
       }
     };
-  }, []); // Empty dependency array means this cleanup runs on unmount
+  }, []);
 
   const approximationRatio = currentOptimalDistance && solverStats.bestDistance !== Infinity && currentOptimalDistance > 0
     ? (solverStats.bestDistance / currentOptimalDistance)
