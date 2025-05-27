@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { BookOpen, Cpu, Puzzle, Settings, ListChecks, BarChart2, Lightbulb } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 
 export default function DocumentationPage() {
   return (
@@ -80,16 +81,16 @@ export default function DocumentationPage() {
                 Experiments on TSPLIB instances (e.g., berlin52, eil76) have shown promising results:
               </p>
               <ul className="list-disc list-inside space-y-2 text-base">
-                <li><strong>Optimal Solutions Found:</strong> SAS can find known optimal solutions for instances like `berlin52` (7542) and `eil76` (538) rapidly, often in a few seconds with a low `K` value (e.g., K=3).</li>
+                <li><strong>Optimal Solutions Found:</strong> SAS can find known optimal solutions for instances like `berlin52` (7542) and `eil76` (538) rapidly, often in a few seconds with a low `K` value (e.g., K=3). For `eil76`, with K=3 and 100 runs, the optimal was found 35% of the time.</li>
                 <li><strong>Excellent Approximation Ratios:</strong> Even when not hitting the exact optimum in every run, average approximation ratios are consistently very good (e.g., ~1.0073 for eil76 with K=3 over 100 runs).</li>
                 <li><strong>Impact of K:</strong>
                   <ul className="list-circle list-inside pl-4 mt-1 space-y-1">
-                    <li>Low K (e.g., 1-2): Extremely fast execution per run. Good for quick, quality approximations. Lower probability of finding the exact optimum per single run, but many runs can be done quickly.</li>
-                    <li>Higher K (e.g., 3): Better average solution quality and higher probability of finding the optimum per run, at the cost of longer execution time per run.</li>
+                    <li>Low K (e.g., 1-2): Extremely fast execution per run (e.g., ~0.5-1s for eil76). Good for quick, quality approximations. Lower probability of finding the exact optimum per single run, but many runs can be done quickly.</li>
+                    <li>Higher K (e.g., 3): Better average solution quality and higher probability of finding the optimum per run, at the cost of longer execution time per run (e.g., ~20s for eil76 with K=3).</li>
                   </ul>
                 </li>
-                <li><strong>Stochastic Nature & Batch Analysis:</strong> Due to random elements (like `shuffle(order)`), multiple runs (batch analysis) are highly beneficial to understand average performance, consistency, and the probability of finding optimal solutions.</li>
-                <li><strong>Convergence Guideline:</strong> Empirical evidence suggests that `K` values around `log(N)` (where N is problem size) can be a good starting point for finding high-quality solutions, though this can vary by instance.</li>
+                <li><strong>Stochastic Nature & Batch Analysis:</strong> Due to random elements (like `shuffle(order)`), multiple runs (batch analysis) are highly beneficial to understand average performance, consistency, and the probability of finding optimal solutions. For instance, with a 35% success rate per run for eil76 (K=3), the probability of finding the optimum at least once in 10 runs is ~98.65%.</li>
+                <li><strong>Convergence Guideline:</strong> Empirical evidence suggests that `K` values around `log(N)` (where N is problem size) can be a good starting point for finding high-quality solutions, though this can vary by instance and desired trade-off between solution quality and computation time.</li>
               </ul>
               <div className="mt-4">
                 <Image 
