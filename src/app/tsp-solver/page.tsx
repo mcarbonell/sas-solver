@@ -53,6 +53,8 @@ interface AggregatedBatchStats {
   totalTimesOptimalFound: number;
   avgApproximationRatio: number | null;
   probOptimalInTenRuns: number | null;
+  probOptimalInNRuns: number | null; 
+  numberOfCitiesInBatch: number | null;
 }
 
 interface HistogramBin {
@@ -146,7 +148,7 @@ export default function TspSolverPage() {
   });
 
   const [maxK, setMaxK] = useState(3);
-  const [maxCitiesRegion, setMaxCitiesRegion] = useState(30); // Not currently used by worker
+  const [maxCitiesRegion, setMaxCitiesRegion] = useState(30); 
   const [isDebugMode, setIsDebugMode] = useState(false); 
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -246,17 +248,19 @@ export default function TspSolverPage() {
     }
   };
 
+
   useEffect(() => {
     const loadInstanceData = async () => {
-      if (workerRef.current) {
+      if (workerRef.current && !isBatchRunIntentActiveRef.current) {
         workerRef.current.terminate(); 
         workerRef.current = null;
       }
       
-      isBatchRunIntentActiveRef.current = false;
-      setIsSolverRunning(false);
-      setIsBatchRunning(false);
-      setBatchEtrFormatted("");
+      if (!isBatchRunIntentActiveRef.current) {
+          setIsSolverRunning(false);
+          setIsBatchRunning(false); 
+          setBatchEtrFormatted("");
+      }
       
       resetSolverState(true); 
       setErrorMessage(null);
@@ -306,7 +310,7 @@ export default function TspSolverPage() {
       setErrorMessage(errorMsg);
     };
 
-    if (!isBatchRunning) { // Only run if not in a batch operation
+    if (!isBatchRunIntentActiveRef.current) { 
         loadInstanceData();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -511,6 +515,7 @@ export default function TspSolverPage() {
   };
 
   const handleStopSolver = () => {
+    isBatchRunIntentActiveRef.current = false; 
     if (workerRef.current) {
       workerRef.current.postMessage({ type: 'stop', id: selectedInstance || 'custom' });
       setTimeout(() => { 
@@ -520,7 +525,6 @@ export default function TspSolverPage() {
         }
       }, 100); 
     }
-    isBatchRunIntentActiveRef.current = false; 
     setIsSolverRunning(false);
     setIsBatchRunning(false); 
     setBatchEtrFormatted(""); 
@@ -563,7 +567,7 @@ export default function TspSolverPage() {
     }
     
     let significantBins = bins.filter(b => b.count > 0);
-    if (significantBins.length === 0 && bins.length > 0) significantBins = [bins[0]];
+    if (significantBins.length === 0 && bins.length > 0) significantBins = [bins[0]]; // Ensure at least one bin if data exists
 
     const distinctValues = new Set(distances).size;
     if (significantBins.length > numBins * 1.5 && significantBins.length > Math.min(5, distinctValues) ) { 
@@ -601,6 +605,7 @@ export default function TspSolverPage() {
     try {
         for (let i = 1; i <= currentLoopNumberOfRuns; i++) {
             if (!isBatchRunIntentActiveRef.current) { 
+                setErrorMessage("Batch run stopped by user after current run completed.");
                 break; 
             }
 
@@ -642,6 +647,9 @@ export default function TspSolverPage() {
             let sumApproximationRatios = 0;
             let validRatiosCount = 0;
             let probOptimalInTenRuns = null;
+            let probOptimalInNRuns = null;
+            const numCitiesInProblem = cities.length;
+
 
             if (currentOptimalDistance !== null && currentOptimalDistance > 0) {
                 resultsCollector.forEach(r => {
@@ -658,10 +666,15 @@ export default function TspSolverPage() {
                 const singleRunSuccessRate = totalTimesOptimalFound / resultsCollector.length;
                 if (singleRunSuccessRate > 0 && singleRunSuccessRate <=1) { 
                     probOptimalInTenRuns = 1 - Math.pow(1 - singleRunSuccessRate, 10);
+                    if (numCitiesInProblem > 0) {
+                        probOptimalInNRuns = 1 - Math.pow(1 - singleRunSuccessRate, numCitiesInProblem);
+                    }
                 } else if (singleRunSuccessRate > 1) { 
                     probOptimalInTenRuns = 1;
+                    if (numCitiesInProblem > 0) probOptimalInNRuns = 1;
                 } else {
                     probOptimalInTenRuns = 0;
+                    if (numCitiesInProblem > 0) probOptimalInNRuns = 0;
                 }
             }
             
@@ -675,6 +688,8 @@ export default function TspSolverPage() {
                 totalTimesOptimalFound,
                 avgApproximationRatio: validRatiosCount > 0 ? sumApproximationRatios / validRatiosCount : null,
                 probOptimalInTenRuns,
+                probOptimalInNRuns,
+                numberOfCitiesInBatch: numCitiesInProblem > 0 ? numCitiesInProblem : null,
             });
             setHistogramData(prepareHistogramData(resultsCollector));
         }
@@ -706,7 +721,7 @@ export default function TspSolverPage() {
   const canRun = !isLoadingData && cities.length > 0;
   const chartConfigSolutions = { solutions: { label: "Solutions", color: "hsl(var(--chart-1))" } };
 
-  const currentKDisplay = solverStats.currentCityIndexInLoop !== undefined && solverStats.totalCitiesInLoop !== undefined && (isSolverRunning || isBatchRunning)
+  const currentKDisplay = solverStats.currentCityIndexInLoop !== undefined && solverStats.totalCitiesInLoop !== undefined && (isSolverRunning || isBatchRunning) && solverStats.totalCitiesInLoop > 0
     ? `${solverStats.currentK} (City ${solverStats.currentCityIndexInLoop + 1}/${solverStats.totalCitiesInLoop})` 
     : `${solverStats.currentK}`;
 
@@ -997,6 +1012,14 @@ export default function TspSolverPage() {
                         <h4 className="text-xs font-medium text-muted-foreground">Prob. Opt. in 10 Runs</h4>
                         <p className="text-lg font-bold">
                           {(aggregatedBatchStats.probOptimalInTenRuns * 100).toFixed(2)}%
+                        </p>
+                      </div>
+                    )}
+                    {aggregatedBatchStats.probOptimalInNRuns !== null && aggregatedBatchStats.numberOfCitiesInBatch !== null && (
+                      <div className="p-3 border rounded-md bg-muted/20">
+                        <h4 className="text-xs font-medium text-muted-foreground">Prob. Opt. in N Runs (N={aggregatedBatchStats.numberOfCitiesInBatch})</h4>
+                        <p className="text-lg font-bold">
+                          {(aggregatedBatchStats.probOptimalInNRuns * 100).toFixed(2)}%
                         </p>
                       </div>
                     )}
