@@ -32,6 +32,7 @@ interface SolverStats {
   bestDistance: number;
   currentCityIndexInLoop?: number;
   totalCitiesInLoop?: number;
+  improvedInRound?: boolean;
 }
 
 interface BatchRunResult {
@@ -53,7 +54,7 @@ interface AggregatedBatchStats {
   totalTimesOptimalFound: number;
   avgApproximationRatio: number | null;
   probOptimalInTenRuns: number | null;
-  probOptimalInNRuns: number | null; 
+  probOptimalInNRuns: number | null;
   numberOfCitiesInBatch: number | null;
 }
 
@@ -145,18 +146,19 @@ export default function TspSolverPage() {
     bestDistance: Infinity,
     currentCityIndexInLoop: undefined,
     totalCitiesInLoop: undefined,
+    improvedInRound: false,
   });
 
   const [maxK, setMaxK] = useState(3);
-  const [maxCitiesRegion, setMaxCitiesRegion] = useState(30); 
-  const [isDebugMode, setIsDebugMode] = useState(false); 
+  const [maxCitiesRegion, setMaxCitiesRegion] = useState(30);
+  const [isDebugMode, setIsDebugMode] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const solverStartTimeRef = useRef<number>(0); 
-  const [currentElapsedTime, setCurrentElapsedTime] = useState<number>(0); 
+  const solverStartTimeRef = useRef<number>(0);
+  const [currentElapsedTime, setCurrentElapsedTime] = useState<number>(0);
   const [formattedTime, setFormattedTime] = useState("00:00:00");
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -166,7 +168,7 @@ export default function TspSolverPage() {
   // Batch execution states
   const [numberOfRuns, setNumberOfRuns] = useState(10);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
-  const isBatchRunIntentActiveRef = useRef(false); 
+  const isBatchRunIntentActiveRef = useRef(false);
   const [currentBatchRunNumber, setCurrentBatchRunNumber] = useState(0);
   const [batchRunResults, setBatchRunResults] = useState<BatchRunResult[]>([]);
   const [aggregatedBatchStats, setAggregatedBatchStats] = useState<AggregatedBatchStats | null>(null);
@@ -187,7 +189,7 @@ export default function TspSolverPage() {
         setOptimalSolutionsData(data);
       } catch (error) {
         console.error("Error fetching optimal solutions:", error);
-        setOptimalSolutionsData({}); 
+        setOptimalSolutionsData({});
       }
     };
     fetchOptimalSolutions();
@@ -208,7 +210,7 @@ export default function TspSolverPage() {
 
   const startTimer = () => {
     solverStartTimeRef.current = Date.now();
-    setCurrentElapsedTime(0); 
+    setCurrentElapsedTime(0);
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
       if (solverStartTimeRef.current > 0) {
@@ -222,20 +224,21 @@ export default function TspSolverPage() {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
-    if(solverStartTimeRef.current > 0){ 
+    if(solverStartTimeRef.current > 0){
         const finalElapsedTime = Date.now() - solverStartTimeRef.current;
-        setCurrentElapsedTime(finalElapsedTime); 
+        setCurrentElapsedTime(finalElapsedTime);
     }
   };
-  
+
   const resetSolverState = (fullResetForNewInstance = false) => {
-    setSolverStats({ 
-        iteration: 0, 
-        improvements: 0, 
-        currentK: 0, 
+    setSolverStats({
+        iteration: 0,
+        improvements: 0,
+        currentK: 0,
         bestDistance: Infinity,
         currentCityIndexInLoop: undefined,
-        totalCitiesInLoop: undefined 
+        totalCitiesInLoop: undefined,
+        improvedInRound: false,
     });
     setBestRoute([]);
 
@@ -244,27 +247,34 @@ export default function TspSolverPage() {
           clearInterval(timerIntervalRef.current);
           timerIntervalRef.current = null;
       }
-      setCurrentElapsedTime(0); 
+      setCurrentElapsedTime(0);
     }
   };
 
 
-  useEffect(() => {
+ useEffect(() => {
     const loadInstanceData = async () => {
+      if (!selectedInstance) {
+        setCities([]);
+        resetSolverState(true);
+        setErrorMessage(null);
+        return;
+      }
+
       if (workerRef.current && !isBatchRunIntentActiveRef.current) {
-        workerRef.current.terminate(); 
+        workerRef.current.terminate();
         workerRef.current = null;
       }
-      
+
       if (!isBatchRunIntentActiveRef.current) {
           setIsSolverRunning(false);
-          setIsBatchRunning(false); 
+          setIsBatchRunning(false);
           setBatchEtrFormatted("");
       }
-      
-      resetSolverState(true); 
+
+      resetSolverState(true);
       setErrorMessage(null);
-      
+
       let newCities: City[] = [];
       let errorMsg: string | null = null;
 
@@ -303,14 +313,14 @@ export default function TspSolverPage() {
           setIsLoadingData(false);
         }
       } else {
-         newCities = []; 
+         newCities = [];
       }
       setCities(newCities);
       setSolverStats(prev => ({...prev, totalCitiesInLoop: newCities.length}));
       setErrorMessage(errorMsg);
     };
 
-    if (!isBatchRunIntentActiveRef.current) { 
+    if (!isBatchRunIntentActiveRef.current) {
         loadInstanceData();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -331,7 +341,7 @@ export default function TspSolverPage() {
     } else {
       setCurrentOptimalDistance(null);
     }
-  }, [cities, selectedInstance, optimalSolutionsData]); 
+  }, [cities, selectedInstance, optimalSolutionsData]);
 
 
   useEffect(() => {
@@ -372,13 +382,13 @@ export default function TspSolverPage() {
     const scaleY = drawableHeight / effectiveRangeY;
     const scale = Math.min(scaleX, scaleY);
 
-    function getCanvasCoords(city: City | CityPoint) { 
+    function getCanvasCoords(city: City | CityPoint) {
         let canvasX = padding + (city.x - minX) * scale;
         let canvasY = canvas!.height - padding - (city.y - minY) * scale;
 
         if (rangeX === 0) canvasX = canvas!.width / 2;
         if (rangeY === 0) canvasY = canvas!.height / 2;
-        
+
         return { x: canvasX, y: canvasY };
     }
 
@@ -398,13 +408,13 @@ export default function TspSolverPage() {
             const point = getCanvasCoords(cities[bestRoute[i]]);
             ctx.lineTo(point.x, point.y);
         }
-        ctx.lineTo(startPoint.x, startPoint.y); 
+        ctx.lineTo(startPoint.x, startPoint.y);
         ctx.strokeStyle = 'hsl(var(--accent))';
         ctx.lineWidth = 2;
         ctx.stroke();
     }
 
-  }, [cities, bestRoute]); 
+  }, [cities, bestRoute]);
 
 
   const runSingleSolverInstance = (): Promise<BatchRunResult> => {
@@ -412,17 +422,17 @@ export default function TspSolverPage() {
       try {
         if (workerRef.current) {
           console.warn("runSingleSolverInstance: workerRef.current was not null, terminating existing worker.");
-          workerRef.current.terminate(); 
+          workerRef.current.terminate();
           workerRef.current = null;
         }
 
-        const localWorker = new Worker('/sas-solver.worker.js'); 
-        workerRef.current = localWorker; 
+        const localWorker = new Worker('/sas-solver.worker.js');
+        workerRef.current = localWorker;
 
         const runStartTime = Date.now();
 
         localWorker.onmessage = (e) => {
-          const { type, iteration, improvements, bestDistance, currentK, route, distance: solutionDistance, currentCityIndexInLoop, totalCitiesInLoop } = e.data;
+          const { type, iteration, improvements, bestDistance, currentK, route, distance: solutionDistance, currentCityIndexInLoop, totalCitiesInLoop, improvedInRound } = e.data;
 
           if (type === 'stats' || type === 'improvement' || type === 'solution') {
             setSolverStats(prevStats => ({
@@ -433,6 +443,7 @@ export default function TspSolverPage() {
               bestDistance: solutionDistance !== undefined ? solutionDistance : (bestDistance !== undefined ? bestDistance : prevStats.bestDistance),
               currentCityIndexInLoop: currentCityIndexInLoop !== undefined ? currentCityIndexInLoop : prevStats.currentCityIndexInLoop,
               totalCitiesInLoop: totalCitiesInLoop !== undefined ? totalCitiesInLoop : prevStats.totalCitiesInLoop,
+              improvedInRound: improvedInRound !== undefined ? improvedInRound : prevStats.improvedInRound,
             }));
             if (route) {
               setBestRoute(route);
@@ -442,11 +453,11 @@ export default function TspSolverPage() {
           if (type === 'solution') {
             const runEndTime = Date.now();
             localWorker.terminate();
-            if (workerRef.current === localWorker) { 
+            if (workerRef.current === localWorker) {
               workerRef.current = null;
             }
             resolve({
-              runNumber: 0, 
+              runNumber: 0,
               distance: solutionDistance,
               time: runEndTime - runStartTime,
               iterations: iteration,
@@ -462,10 +473,10 @@ export default function TspSolverPage() {
           if (workerRef.current === localWorker) { workerRef.current = null; }
           reject(new Error(`Worker error: ${error.message || 'Unknown worker error'}`));
         };
-        
+
         const citiesForWorker: CityPoint[] = cities.map(c => ({ x: c.x, y: c.y }));
         if (!citiesForWorker || citiesForWorker.length === 0) {
-           localWorker.terminate(); 
+           localWorker.terminate();
            if (workerRef.current === localWorker) workerRef.current = null;
            reject(new Error("Cannot start worker: cities list is empty for runSingleSolverInstance."));
            return;
@@ -473,14 +484,14 @@ export default function TspSolverPage() {
         localWorker.postMessage({
           type: 'start',
           cities: citiesForWorker,
-          id: selectedInstance || 'custom', 
+          id: selectedInstance || 'custom',
           maxK: maxK,
           debug: isDebugMode,
         });
 
       } catch (promiseSetupError: any) {
         console.error("Error setting up worker promise in runSingleSolverInstance:", promiseSetupError);
-        if (workerRef.current) { 
+        if (workerRef.current) {
             workerRef.current.terminate();
             workerRef.current = null;
         }
@@ -493,42 +504,42 @@ export default function TspSolverPage() {
     if (isSolverRunning || cities.length === 0 || isBatchRunning) return;
 
     setIsSolverRunning(true);
-    isBatchRunIntentActiveRef.current = false; 
+    isBatchRunIntentActiveRef.current = false;
     setErrorMessage(null);
     resetSolverState(false);
-    setAggregatedBatchStats(null); 
+    setAggregatedBatchStats(null);
     setHistogramData(null);
     setBatchInstanceName(null);
     setBatchEtrFormatted("");
     setBatchMaxKUsed(null);
-    
-    startTimer(); 
+
+    startTimer();
 
     try {
       await runSingleSolverInstance();
     } catch (error: any) {
       setErrorMessage(error.message || "Solver run failed.");
     } finally {
-      stopTimer(); 
+      stopTimer();
       setIsSolverRunning(false);
     }
   };
 
   const handleStopSolver = () => {
-    isBatchRunIntentActiveRef.current = false; 
+    isBatchRunIntentActiveRef.current = false;
     if (workerRef.current) {
       workerRef.current.postMessage({ type: 'stop', id: selectedInstance || 'custom' });
-      setTimeout(() => { 
+      setTimeout(() => {
         if (workerRef.current) {
           workerRef.current.terminate();
           workerRef.current = null;
         }
-      }, 100); 
+      }, 100);
     }
     setIsSolverRunning(false);
-    setIsBatchRunning(false); 
-    setBatchEtrFormatted(""); 
-    stopTimer(); 
+    setIsBatchRunning(false);
+    setBatchEtrFormatted("");
+    stopTimer();
   };
 
   const prepareHistogramData = (results: BatchRunResult[], numBins: number = 15): HistogramBin[] => {
@@ -542,7 +553,7 @@ export default function TspSolverPage() {
       return [{ range: `${minVal.toFixed(0)}`, count: distances.length }];
     }
 
-    const binWidth = Math.max(1, Math.ceil((maxVal - minVal +1) / numBins)); 
+    const binWidth = Math.max(1, Math.ceil((maxVal - minVal +1) / numBins));
     const bins: HistogramBin[] = [];
 
     let currentBinStart = Math.floor(minVal / binWidth) * binWidth;
@@ -551,7 +562,7 @@ export default function TspSolverPage() {
 
     for (let i = 0; ; i++) {
         const binStart = currentBinStart + (i * binWidth);
-        const binEnd = binStart + binWidth -1; 
+        const binEnd = binStart + binWidth -1;
 
         const count = distances.filter(d => d >= binStart && d <= binEnd).length;
         let rangeLabel = `${binStart.toFixed(0)}-${binEnd.toFixed(0)}`;
@@ -563,14 +574,14 @@ export default function TspSolverPage() {
               count: count,
             });
         }
-        if (binEnd >= maxVal || bins.length >= numBins * 2) break; 
+        if (binEnd >= maxVal || bins.length >= numBins * 2) break;
     }
-    
+
     let significantBins = bins.filter(b => b.count > 0);
-    if (significantBins.length === 0 && bins.length > 0) significantBins = [bins[0]]; // Ensure at least one bin if data exists
+    if (significantBins.length === 0 && bins.length > 0) significantBins = [bins[0]];
 
     const distinctValues = new Set(distances).size;
-    if (significantBins.length > numBins * 1.5 && significantBins.length > Math.min(5, distinctValues) ) { 
+    if (significantBins.length > numBins * 1.5 && significantBins.length > Math.min(5, distinctValues) ) {
         return prepareHistogramData(results, Math.max(Math.min(5, distinctValues), Math.floor(numBins / 1.5)));
     }
 
@@ -580,44 +591,43 @@ export default function TspSolverPage() {
  const handleRunBatchSolver = async () => {
     if (isBatchRunning || cities.length === 0 || isSolverRunning || numberOfRuns <= 0) return;
 
-    const actualBatchStartTime = Date.now(); 
-    
+    const actualBatchStartTime = Date.now();
+
     setIsBatchRunning(true);
-    isBatchRunIntentActiveRef.current = true; 
+    isBatchRunIntentActiveRef.current = true;
     setErrorMessage(null);
     const tempBatchResults: BatchRunResult[] = [];
-    setBatchRunResults(tempBatchResults); 
-    setAggregatedBatchStats(null); 
-    setHistogramData(null); 
+    setBatchRunResults(tempBatchResults);
+    setAggregatedBatchStats(null);
+    setHistogramData(null);
     setBatchEtrFormatted("");
-    
+
     const currentTSPInstance = tspInstances.find(inst => inst.id === selectedInstance);
     const currentInstanceName = currentTSPInstance ? currentTSPInstance.name.split(' (')[0] : (selectedInstance === "custom" ? "Custom Input" : "Unknown Instance");
     setBatchInstanceName(currentInstanceName);
-    setBatchMaxKUsed(maxK); 
+    setBatchMaxKUsed(maxK);
 
     const resultsCollector: BatchRunResult[] = [];
     let totalBatchProcessingTime = 0;
-    const currentLoopNumberOfRuns = numberOfRuns; 
+    const currentLoopNumberOfRuns = numberOfRuns;
 
-    startTimer(); 
+    startTimer();
 
     try {
         for (let i = 1; i <= currentLoopNumberOfRuns; i++) {
-            if (!isBatchRunIntentActiveRef.current) { 
-                setErrorMessage("Batch run stopped by user after current run completed.");
-                break; 
+            if (!isBatchRunIntentActiveRef.current) {
+                break;
             }
 
             setCurrentBatchRunNumber(i);
-            resetSolverState(false); 
+            resetSolverState(false);
 
             try {
                 const result = await runSingleSolverInstance();
-                
+
                 resultsCollector.push({ ...result, runNumber: i });
                 totalBatchProcessingTime += result.time;
-                setBatchRunResults([...resultsCollector]); 
+                setBatchRunResults([...resultsCollector]);
 
                 const runsCompleted = i;
                 const runsRemaining = currentLoopNumberOfRuns - runsCompleted;
@@ -629,14 +639,14 @@ export default function TspSolverPage() {
                     setBatchEtrFormatted("");
                 }
 
-            } catch (error: any) { 
+            } catch (error: any) {
                 setErrorMessage(`Error in batch run ${i}: ${error.message || 'Unknown error'}`);
-                break; 
+                break;
             }
         }
     } finally {
-        stopTimer(); 
-        
+        stopTimer();
+
         const finalBatchDuration = Date.now() - actualBatchStartTime;
 
         if (resultsCollector.length > 0) {
@@ -653,10 +663,10 @@ export default function TspSolverPage() {
 
             if (currentOptimalDistance !== null && currentOptimalDistance > 0) {
                 resultsCollector.forEach(r => {
-                    if (Math.round(r.distance) === currentOptimalDistance) { 
+                    if (Math.round(r.distance) === currentOptimalDistance) {
                         totalTimesOptimalFound++;
                     }
-                    const ratio = r.distance / currentOptimalDistance!; 
+                    const ratio = r.distance / currentOptimalDistance!;
                     sumApproximationRatios += ratio;
                     validRatiosCount++;
                 });
@@ -664,12 +674,12 @@ export default function TspSolverPage() {
 
             if (resultsCollector.length > 0 && totalTimesOptimalFound > 0 && currentOptimalDistance !== null) {
                 const singleRunSuccessRate = totalTimesOptimalFound / resultsCollector.length;
-                if (singleRunSuccessRate > 0 && singleRunSuccessRate <=1) { 
+                if (singleRunSuccessRate > 0 && singleRunSuccessRate <=1) {
                     probOptimalInTenRuns = 1 - Math.pow(1 - singleRunSuccessRate, 10);
                     if (numCitiesInProblem > 0) {
                         probOptimalInNRuns = 1 - Math.pow(1 - singleRunSuccessRate, numCitiesInProblem);
                     }
-                } else if (singleRunSuccessRate > 1) { 
+                } else if (singleRunSuccessRate > 1) {
                     probOptimalInTenRuns = 1;
                     if (numCitiesInProblem > 0) probOptimalInNRuns = 1;
                 } else {
@@ -677,14 +687,14 @@ export default function TspSolverPage() {
                     if (numCitiesInProblem > 0) probOptimalInNRuns = 0;
                 }
             }
-            
+
             setAggregatedBatchStats({
                 numberOfRuns: resultsCollector.length,
                 minDistance,
                 maxDistance,
                 avgDistance: totalDistance / resultsCollector.length,
-                avgTimePerRun: totalBatchProcessingTime / resultsCollector.length, 
-                totalBatchTime: finalBatchDuration, 
+                avgTimePerRun: totalBatchProcessingTime / resultsCollector.length,
+                totalBatchTime: finalBatchDuration,
                 totalTimesOptimalFound,
                 avgApproximationRatio: validRatiosCount > 0 ? sumApproximationRatios / validRatiosCount : null,
                 probOptimalInTenRuns,
@@ -693,16 +703,16 @@ export default function TspSolverPage() {
             });
             setHistogramData(prepareHistogramData(resultsCollector));
         }
-        isBatchRunIntentActiveRef.current = false; 
-        setIsBatchRunning(false); 
-        setCurrentBatchRunNumber(0); 
-        setBatchEtrFormatted(""); 
+        isBatchRunIntentActiveRef.current = false;
+        setIsBatchRunning(false);
+        setCurrentBatchRunNumber(0);
+        setBatchEtrFormatted("");
     }
 };
 
 
   useEffect(() => {
-    return () => { 
+    return () => {
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
@@ -710,9 +720,9 @@ export default function TspSolverPage() {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
       }
-      isBatchRunIntentActiveRef.current = false; 
+      isBatchRunIntentActiveRef.current = false;
     };
-  }, []); 
+  }, []);
 
   const approximationRatio = currentOptimalDistance && solverStats.bestDistance !== Infinity && currentOptimalDistance > 0
     ? (solverStats.bestDistance / currentOptimalDistance)
@@ -721,9 +731,11 @@ export default function TspSolverPage() {
   const canRun = !isLoadingData && cities.length > 0;
   const chartConfigSolutions = { solutions: { label: "Solutions", color: "hsl(var(--chart-1))" } };
 
-  const currentKDisplay = solverStats.currentCityIndexInLoop !== undefined && solverStats.totalCitiesInLoop !== undefined && (isSolverRunning || isBatchRunning) && solverStats.totalCitiesInLoop > 0
-    ? `${solverStats.currentK} (City ${solverStats.currentCityIndexInLoop + 1}/${solverStats.totalCitiesInLoop})` 
-    : `${solverStats.currentK}`;
+  const currentKDisplay = solverStats.currentK +
+    (solverStats.improvedInRound ? "+" : "") +
+    (solverStats.currentCityIndexInLoop !== undefined && solverStats.totalCitiesInLoop !== undefined && (isSolverRunning || isBatchRunning) && solverStats.totalCitiesInLoop > 0
+      ? ` (City ${solverStats.currentCityIndexInLoop + 1}/${solverStats.totalCitiesInLoop})`
+      : "");
 
 
   return (
@@ -788,7 +800,7 @@ export default function TspSolverPage() {
               <Label htmlFor="maxCitiesRegion" className="text-base">Max Cities Per Region (Parallel)</Label>
               <Input id="maxCitiesRegion" type="number" value={maxCitiesRegion} onChange={e => setMaxCitiesRegion(parseInt(e.target.value,10) || 0)} placeholder="e.g., 30" disabled={isSolverRunning || isBatchRunning || true} title="For future parallel implementation"/>
             </div>
-            
+
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="debugMode"

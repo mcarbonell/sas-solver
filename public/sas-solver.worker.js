@@ -151,6 +151,7 @@ class SAS_Solver {
       improvements: this.improvements,
       bestDistance: this.bestDistance,
       currentK: this.currentK,
+      improvedInRound: this.improvedInRound,
       currentCityIndexInLoop: this.currentCityIndexInLoop,
       totalCitiesInLoop: this.numCities,
     });
@@ -179,6 +180,7 @@ class SAS_Solver {
       iteration: this.iteration,
       improvements: this.improvements,
       currentK: this.currentK,
+      improvedInRound: this.improvedInRound,
       currentCityIndexInLoop: this.currentCityIndexInLoop,
       totalCitiesInLoop: this.numCities,
     });
