@@ -1052,7 +1052,7 @@ export default function TspSolverPage() {
                       <YAxis allowDecimals={false} label={{ value: 'Frequency', angle: -90, position: 'insideLeft' }} />
                       <Tooltip content={<ChartTooltipContent />} />
                       <Legend verticalAlign="top" />
-                      <Bar dataKey="count" fill="var(--color-solutions)" name="Solutions in Range" radius={[3, 3, 0, 0]} />
+                      <Bar dataKey="count" fill="var(--color-solutions)" name="Solutions in Range " radius={[3, 3, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </ChartContainer>

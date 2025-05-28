@@ -17,7 +17,7 @@ class SAS_Solver {
     this.improvements = 0; // Number of times a new best route was found
     this.currentK = 0; // Current number of alternatives being explored
     this.currentCityIndexInLoop = 0; // For detailed progress: current city index in the main k-loop
-    this.totalCitiesInLoop = 0; // For detailed progress: total cities in the main k-loop
+    // this.totalCitiesInLoop = 0; // For detailed progress: total cities in the main k-loop // Siempre es numCities
 
 
     this.maxK = 0; // Maximum number of alternatives to explore
@@ -31,7 +31,7 @@ class SAS_Solver {
     this.isRunning = true; // Flag to control the solver's execution loop
     this.improvedInRound = true; // Flag to track if an improvement was made in the current round for a given K
 
-    this.statsUpdateInterval = null; // Interval ID for periodic stats updates
+    // this.statsUpdateInterval = null; // Interval ID for periodic stats updates
   }
 
   /**
@@ -43,6 +43,7 @@ class SAS_Solver {
    * @param {boolean} data.debug - Debug flag.
    */
   initialize(data) {
+
     this.id = data.id;
     this.cities = data.cities;
     this.numCities = this.cities.length;
@@ -56,7 +57,6 @@ class SAS_Solver {
     this.improvements = 0;
     this.currentK = 0;
     this.currentCityIndexInLoop = 0;
-    this.totalCitiesInLoop = this.numCities; // Set once
     this.isRunning = true;
     this.improvedInRound = true;
 
@@ -70,8 +70,8 @@ class SAS_Solver {
     this.precomputeDistancesAndHeuristics();
 
     // Start periodic stats updates
-    if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
-    this.statsUpdateInterval = setInterval(() => this.sendStats(), 1000);
+    // if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
+    // this.statsUpdateInterval = setInterval(() => this.sendStats(), 1000);
 
     if (this.debug) console.log(`[${this.id}] Worker initialized. MaxK: ${this.maxK}, Cities: ${this.numCities}`);
     
@@ -84,7 +84,7 @@ class SAS_Solver {
    */
   stop() {
     this.isRunning = false;
-    if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
+    // if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
     if (this.debug) console.log(`[${this.id}] Worker stopped by request.`);
   }
 
@@ -143,7 +143,7 @@ class SAS_Solver {
   /**
    * Sends statistics to the main thread.
    */
-  sendStats(isLoopUpdate = false) {
+  sendStats() {
     self.postMessage({
       type: 'stats',
       id: this.id,
@@ -151,8 +151,8 @@ class SAS_Solver {
       improvements: this.improvements,
       bestDistance: this.bestDistance,
       currentK: this.currentK,
-      currentCityIndexInLoop: isLoopUpdate ? this.currentCityIndexInLoop : undefined,
-      totalCitiesInLoop: isLoopUpdate ? this.totalCitiesInLoop : undefined,
+      currentCityIndexInLoop: this.currentCityIndexInLoop,
+      totalCitiesInLoop: this.numCities,
     });
   }
 
@@ -179,6 +179,8 @@ class SAS_Solver {
       iteration: this.iteration,
       improvements: this.improvements,
       currentK: this.currentK,
+      currentCityIndexInLoop: this.currentCityIndexInLoop,
+      totalCitiesInLoop: this.numCities,
     });
     // Also send general stats
     this.sendStats();
@@ -195,10 +197,10 @@ class SAS_Solver {
       this.updateBestRoute(routeDistance, currentRoute);
     }
 
-    // // Send stats periodically even if no improvement (handled by interval now)
-    // if (this.iteration % 100000 === 0) { // Reduced frequency as interval handles it
-    //   this.sendStats();
-    // }
+    // Send stats periodically even if no improvement (handled by interval now)
+    if (this.iteration % 500000 === 0) { // Reduced frequency as interval handles it
+      this.sendStats();
+    }
   }
 
   /**
@@ -283,50 +285,55 @@ class SAS_Solver {
       this.sendFinalSolution();
       return;
     }
+
+    this.currentK = 0;
+    let cityOrder = Array.from({ length: this.numCities }, (_, i) => i);
+    this.shuffleArray(cityOrder);
     
     // Initial greedy solution (K=0) if no route exists yet
     if (this.bestRoute.length === 0 && this.numCities > 0) {
-        this.currentK = 0;
+        
         this.currentCityIndexInLoop = 1; // Indicate start of loop
-        this.sendStats(true); // Send initial K state
+        this.sendStats(); // Send initial K state
 
-        const initialStartCity = 0;
+        const initialStartCity = cityOrder[0];
         const initialRemaining = new Set(this.cities.map((_, idx) => idx).filter(j => j !== initialStartCity));
         this.systematicAlternativesSearch(initialRemaining, [initialStartCity], 0);
         if (!this.isRunning) { this.sendFinalSolution(); return; }
     }
 
-    this.improvedInRound = true; // Assume improvement to start the K loop
-    let kIteration = this.currentK; // Start from currentK (usually 0 or 1)
-
     // Main loop: iterate K and then iterate starting cities
-    while (this.improvedInRound && kIteration <= this.maxK && this.isRunning) {
-      this.currentK = kIteration;
-      this.improvedInRound = false; // Reset for this K value
+    
+    let round = 0;
+    this.currentK = 1;
 
+    while (this.currentK <= this.maxK && this.isRunning) {
+      
+      this.improvedInRound = false; // Reset for this K value
+      round++;
       if (this.debug) console.log(`[${this.id}] Starting K = ${this.currentK}`);
       
-      // Create a shuffled order of starting cities
-      let cityOrder = Array.from({ length: this.numCities }, (_, i) => i);
+      // Create a shuffled order of starting cities      
       this.shuffleArray(cityOrder);
 
-      for (let i = 0; i < this.numCities; i++) {
+      for (this.currentCityIndexInLoop = 1; this.currentCityIndexInLoop <= this.numCities; this.currentCityIndexInLoop++) {
         if (!this.isRunning) break;
         
-        const startCity = cityOrder[i];
-        this.currentCityIndexInLoop = i + 1; // 1-indexed for display
-        this.sendStats(true); // Send progress within the city loop
-
-        if (this.debug && (i % 20 === 0 || i === this.numCities -1) ) { // Log progress occasionally
-            console.log(`[${this.id}] K=${this.currentK}, Round for city ${i+1}/${this.numCities}. Best: ${this.bestDistance.toFixed(0)}`);
+        if (this.debug) {
+          let sign = (this.improvedInRound) ? '+' : '';
+          console.log(`[${this.id}] K=${this.currentK}/${this.maxK}, Round ${round}${sign}, city ${this.currentCityIndexInLoop}/${this.numCities}.`);
         }
         
+        const startCity = cityOrder[this.currentCityIndexInLoop -1];
+        // this.sendStats(); // Send progress within the city loop
+       
         let remainingCities = new Set(this.cities.map((_, index) => index).filter(j => j !== startCity));
         this.systematicAlternativesSearch(remainingCities, [startCity], this.currentK);
       }
       
       if (!this.improvedInRound && this.isRunning) { // If no improvement in this K round, increment K
-         kIteration++;
+        this.currentK++;
+        round = 0;
       }
       // If there was an improvement, improvedInRound is true, so the while loop continues with the same K
       // or resets K if we want a different strategy (e.g. K=0 again, but current keeps K)
@@ -342,7 +349,7 @@ class SAS_Solver {
    * Sends the final solution message to the main thread.
    */
   sendFinalSolution() {
-    if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
+    // if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
     this.statsUpdateInterval = null;
 
     // Ensure a final stats update is sent before the solution
@@ -356,7 +363,7 @@ class SAS_Solver {
       distance: this.bestDistance,
       iteration: this.iteration,
       improvements: this.improvements,
-      currentK: this.currentK, // The K at which the process concluded
+      currentK: this.maxK, // The K at which the process concluded
     });
      if (this.debug) console.log(`[${this.id}] Final solution sent.`);
   }
