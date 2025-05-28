@@ -43,11 +43,11 @@ This document lists bugs encountered during the development of the SAS Solver Su
     *   Timer continued running after selecting a new TSP instance.
     *   Total Batch Time in summary was incorrect (e.g., showed 3 seconds when it took over a minute).
     *   **Cause (Initial large time & continuation):** Interaction of `startTime` and `elapsedTime` state during initial reset; timer interval not being cleared properly.
-    *   **Cause (Incorrect Total Batch Time):** `currentElapsedTime` state not being updated synchronously before `setAggregatedBatchStats` was called.
+    *   **Cause (Incorrect Total Batch Time):** `currentElapsedTime` state not being updated synchronously before `setAggregatedBatchStats` was called OR `solverStartTimeRef` being reset/stale.
     *   **Solution:**
         *   Refactored timer logic to use `currentElapsedTime` (numeric ms), `solverStartTimeRef` (Date.now() timestamp), and a `useEffect` for `formattedTime`.
         *   Ensured `clearInterval` and state resets in `resetSolverState` and instance loading `useEffect`.
-        *   For "Total Batch Time", calculated `finalBatchDuration` directly using `Date.now() - solverStartTimeRef.current` within `handleRunBatchSolver`'s `finally` block (or just before setting aggregated stats) and used this precise value.
+        *   For "Total Batch Time", ensured `finalBatchDuration` is calculated using a locally captured timestamp from the beginning of `handleRunBatchSolver` (`actualBatchStartTime`) to avoid issues with `solverStartTimeRef` potentially being stale or reset.
     *   **Status:** Resolved.
 
 7.  **Bug:** Batch runs executed only one iteration, sometimes showing "Batch run stopped by user."
@@ -65,5 +65,7 @@ This document lists bugs encountered during the development of the SAS Solver Su
 
 *   **Batch Stop Robustness:** The "Stop Solver" button during a batch run currently relies on `isBatchRunIntentActiveRef.current` being checked at the start of each iteration. If an individual solver run is very long, the stop might not feel immediate. (Minor)
 *   **Histogram Binning for Extreme Distributions:** The `prepareHistogramData` function uses a heuristic for binning. For datasets with very unusual distributions or extreme outliers, the binning might not be optimal. (Minor)
+*   **Performance of `runSingleSolverInstance` Error Handling:** Wrapping worker creation in a try-catch inside the Promise in `runSingleSolverInstance` adds a small overhead. For very high-frequency, short-duration runs, this could be revisited if profiling shows it as a bottleneck. (Very Minor)
 
 *(This file will be updated as new bugs are found and resolved.)*
+
