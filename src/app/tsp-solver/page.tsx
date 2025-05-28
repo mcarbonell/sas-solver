@@ -147,7 +147,7 @@ export default function TspSolverPage() {
   const workerRef = useRef<Worker | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const solverStartTimeRef = useRef<number>(0);
+  const solverStartTimeRef = useRef<number>(0); // For main display timer
   const [currentElapsedTime, setCurrentElapsedTime] = useState<number>(0); 
   const [formattedTime, setFormattedTime] = useState("00:00:00");
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -158,7 +158,7 @@ export default function TspSolverPage() {
   // Batch execution states
   const [numberOfRuns, setNumberOfRuns] = useState(10);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
-  const isBatchRunIntentActiveRef = useRef(false);
+  const isBatchRunIntentActiveRef = useRef(false); // Ref to control batch continuation intent
   const [currentBatchRunNumber, setCurrentBatchRunNumber] = useState(0);
   const [batchRunResults, setBatchRunResults] = useState<BatchRunResult[]>([]);
   const [aggregatedBatchStats, setAggregatedBatchStats] = useState<AggregatedBatchStats | null>(null);
@@ -200,7 +200,7 @@ export default function TspSolverPage() {
 
   const startTimer = () => {
     solverStartTimeRef.current = Date.now();
-    setCurrentElapsedTime(0); // Reset elapsed time display
+    setCurrentElapsedTime(0); 
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
       if (solverStartTimeRef.current > 0) {
@@ -214,23 +214,22 @@ export default function TspSolverPage() {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
-    if(solverStartTimeRef.current > 0){ // Ensure startTime was set
-        setCurrentElapsedTime(Date.now() - solverStartTimeRef.current);
+    if(solverStartTimeRef.current > 0){ 
+        const finalElapsedTime = Date.now() - solverStartTimeRef.current;
+        setCurrentElapsedTime(finalElapsedTime); 
     }
   };
   
   const resetSolverState = (fullResetForNewInstance = false) => {
-    if (fullResetForNewInstance || (!isSolverRunning && !isBatchRunning)) { 
-        if (timerIntervalRef.current) {
-            clearInterval(timerIntervalRef.current);
-            timerIntervalRef.current = null;
-        }
-    }
-
     setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
     setBestRoute([]);
 
     if (fullResetForNewInstance) {
+      if (timerIntervalRef.current) {
+          clearInterval(timerIntervalRef.current);
+          timerIntervalRef.current = null;
+      }
+      setCurrentElapsedTime(0); 
       setErrorMessage(null);
       setCities([]);
     }
@@ -241,15 +240,16 @@ export default function TspSolverPage() {
   useEffect(() => {
     const loadInstanceData = async () => {
       if (workerRef.current) {
-        workerRef.current.terminate();
+        workerRef.current.terminate(); // Terminate existing worker
         workerRef.current = null;
       }
+      // Stop any ongoing batch or single run when instance changes
       isBatchRunIntentActiveRef.current = false;
       setIsSolverRunning(false);
       setIsBatchRunning(false);
       setBatchEtrFormatted("");
-      resetSolverState(true); 
-      setCurrentElapsedTime(0); // Ensure timer display is reset
+      
+      resetSolverState(true); // Full reset for new instance, including timer display
 
       let newCities: City[] = [];
       let errorMsg: string | null = null;
@@ -296,7 +296,8 @@ export default function TspSolverPage() {
     };
 
     loadInstanceData();
-  }, [selectedInstance, customInstanceData]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedInstance, customInstanceData]); // optimalSolutionsData removed to prevent batch stop
 
 
   // Effect for updating currentOptimalDistance based on loaded cities and optimal solutions data
@@ -305,13 +306,9 @@ export default function TspSolverPage() {
     if (selectedInstance && selectedInstance !== "custom") {
       problemNameForOptimalLookup = selectedInstance.replace('.tsp', '');
     } else if (selectedInstance === "custom" && cities.length > 0) {
-      // For custom instances, we can't automatically determine the name for lookup
-      // unless there's a naming convention or a way to extract it.
-      // For now, we assume custom instances don't have a direct lookup.
       setCurrentOptimalDistance(null);
       return;
     }
-
 
     if (problemNameForOptimalLookup && optimalSolutionsData && optimalSolutionsData[problemNameForOptimalLookup]) {
       setCurrentOptimalDistance(optimalSolutionsData[problemNameForOptimalLookup]);
@@ -375,7 +372,7 @@ export default function TspSolverPage() {
       ctx.fill();
     });
 
-    if (bestRoute.length > 0 && cities.length > 0) {
+    if (bestRoute.length > 0 && cities.length > 0 && bestRoute.every(idx => idx < cities.length)) {
         ctx.beginPath();
         const startPoint = getCanvasCoords(cities[bestRoute[0]]);
         ctx.moveTo(startPoint.x, startPoint.y);
@@ -401,11 +398,10 @@ export default function TspSolverPage() {
           workerRef.current = null;
         }
 
-        const localWorker = new Worker('/solve-worker.js');
+        const localWorker = new Worker('/sas-solver.worker.js'); // Use the refactored worker
         workerRef.current = localWorker; 
 
         const runStartTime = Date.now();
-        // No separate timer start/stop for individual runs within a batch
 
         localWorker.onmessage = (e) => {
           const { type, iteration, improvements, bestDistance, currentK, route, distance: solutionDistance } = e.data;
@@ -457,7 +453,7 @@ export default function TspSolverPage() {
         localWorker.postMessage({
           type: 'start',
           cities: citiesForWorker,
-          id: 'GLOBAL', 
+          id: selectedInstance || 'custom', 
           maxK: maxK,
           debug: false 
         });
@@ -486,22 +482,28 @@ export default function TspSolverPage() {
     setBatchEtrFormatted("");
     setBatchMaxKUsed(null);
     
-    startTimer(); // Start timer for single run
+    startTimer(); 
 
     try {
       await runSingleSolverInstance();
     } catch (error: any) {
       setErrorMessage(error.message || "Solver run failed.");
     } finally {
-      stopTimer(); // Stop timer for single run
+      stopTimer(); 
       setIsSolverRunning(false);
     }
   };
 
   const handleStopSolver = () => {
     if (workerRef.current) {
-      workerRef.current.terminate();
-      workerRef.current = null;
+      workerRef.current.postMessage({ type: 'stop', id: selectedInstance || 'custom' });
+      // Give worker a moment to process stop message before terminating
+      setTimeout(() => {
+        if (workerRef.current) {
+          workerRef.current.terminate();
+          workerRef.current = null;
+        }
+      }, 100);
     }
     isBatchRunIntentActiveRef.current = false; 
     setIsSolverRunning(false);
@@ -576,13 +578,13 @@ export default function TspSolverPage() {
     let totalBatchProcessingTime = 0;
     const currentLoopNumberOfRuns = numberOfRuns; 
 
-    const actualBatchStartTime = Date.now(); // Capture actual batch start time
-    startTimer(); // This sets solverStartTimeRef.current for the main display timer
+    const actualBatchStartTime = Date.now(); 
+    startTimer(); 
 
     try {
         for (let i = 1; i <= currentLoopNumberOfRuns; i++) {
             if (!isBatchRunIntentActiveRef.current) { 
-                setErrorMessage("Batch run stopped by user.");
+                // setErrorMessage("Batch run stopped by user."); // Removed for now
                 break; 
             }
 
@@ -612,7 +614,7 @@ export default function TspSolverPage() {
             }
         }
     } finally {
-        stopTimer(); // Stop the main display timer
+        stopTimer(); 
         isBatchRunIntentActiveRef.current = false; 
         setIsBatchRunning(false); 
         setCurrentBatchRunNumber(0); 
@@ -649,7 +651,7 @@ export default function TspSolverPage() {
                 }
             }
             
-            const finalBatchDuration = Date.now() - actualBatchStartTime; // Use locally captured batch start time
+            const finalBatchDuration = Date.now() - actualBatchStartTime; 
 
             setAggregatedBatchStats({
                 numberOfRuns: resultsCollector.length,
@@ -1006,4 +1008,3 @@ export default function TspSolverPage() {
     </div>
   );
 }
-

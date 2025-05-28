@@ -7,6 +7,7 @@ This document tracks the features and functionalities that have been successfull
 
 *   [x] **TSP Solver Page:** Dedicated page (`/tsp-solver`) for interacting with the SAS algorithm for TSP.
 *   [x] **Web Worker:** SAS algorithm implemented in `public/solve-worker.js` for background processing, preventing UI freeze.
+    *   [x] **Refactored Web Worker:** Original `solve-worker.js` refactored into a class-based structure in `public/sas-solver.worker.js` for improved readability and organization. TSP Solver page now uses this refactored worker.
 *   [x] **TSPLIB Instance Loading:**
     *   [x] Dropdown to select standard TSPLIB instances.
     *   [x] API route (`/api/tsp-instance`) to fetch TSPLIB file content from the server.
@@ -73,12 +74,18 @@ This document tracks the features and functionalities that have been successfull
 
 ## Documentation & Project Structure
 
-*   [x] **Overview Page (`/`):** Basic introduction to the SAS Solver Suite. Updated with key features.
+*   [x] **Overview Page (`/`):** Basic introduction to the SAS Solver Suite. Updated with key features and insights.
 *   [x] **Documentation Page (`/documentation`):**
     *   [x] Explanation of the SAS algorithm, core concepts, and key parameters.
     *   [x] Section on observed performance and insights based on experiments.
     *   [x] Basic usage guide for the TSP Solver.
 *   [x] **File Structure:** Organization of TSPLIB files and solver worker.
+*   [x] **Project Meta-Documents:**
+    *   [x] `README.md`: High-level project overview.
+    *   [x] `DONE.md`: List of implemented features.
+    *   [x] `TODO.md`: List of planned features and improvements.
+    *   [x] `BUGS.md`: Tracker for bugs encountered and their resolutions.
+
 
 ## Bug Fixes & Refinements
 
@@ -87,5 +94,6 @@ This document tracks the features and functionalities that have been successfull
 *   [x] Resolved issues with loading and parsing TSPLIB instances (404 errors, coordinate parsing).
 *   [x] Addressed syntax errors in component code.
 *   [x] Fixed various bugs related to timer logic (initialization, reset, batch total time).
-*   [x] Resolved several bugs related to batch run execution (premature stopping, only one run executing).
+*   [x] Resolved several bugs related to batch run execution (premature stopping, only one run executing, incorrect total batch time).
 *   [x] Ensured API routes handle file errors gracefully.
+
