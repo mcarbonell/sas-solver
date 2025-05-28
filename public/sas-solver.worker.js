@@ -1,292 +1,211 @@
 
 /**
- * @fileOverview SAS (Systematic Alternatives Search) Solver Web Worker
- *
- * This worker implements the SAS algorithm for solving TSP instances.
- * It receives city data and parameters from the main thread, runs the
- * SAS algorithm, and posts back progress (stats, improvements) and the
- * final solution.
- *
- * Original concept by M. Carbonell, refactored into a class structure.
+ * @file sas-solver.worker.js
+ * Web Worker for the Systematic Alternatives Search (SAS) algorithm for TSP.
  */
 
 class SAS_Solver {
   constructor() {
-    this.id = ''; // Identifier for the current task/instance
-    this.cities = []; // Array of city objects { x: number, y: number }
+    this.id = ''; // Identifier for the solver instance (e.g., TSP problem name)
+    this.cities = []; // Array of city objects { x, y }
     this.numCities = 0;
-    this.maxK = 0; // Max K for systematic alternatives
-    this.debug = false;
+    this.bestRoute = []; // Stores the indices of cities in the best route found
+    this.bestDistance = Infinity; // Length of the best route found
 
-    this.bestRoute = [];
-    this.bestPossibleDistance = 0; // Theoretical lower bound (sum of 2 nearest for each city / 2)
+    // Stats
+    this.iteration = 0; // Number of routes evaluated
+    this.improvements = 0; // Number of times a new best route was found
+    this.currentK = 0; // Current number of alternatives being explored
+    this.currentCityIndexInLoop = 0; // For detailed progress: current city index in the main k-loop
+    this.totalCitiesInLoop = 0; // For detailed progress: total cities in the main k-loop
 
-    this.stats = {
-      iteration: 0,
-      improvements: 0,
-      currentK: 0, // K value currently being processed / reported
-      bestDistance: Infinity,
-    };
 
-    this.currentK = 0; // Actual K value used in the main solve loop controller
-    this.distances = []; // 2D array for precomputed distances
+    this.maxK = 0; // Maximum number of alternatives to explore
+    this.debug = false; // Flag for enabling debug logs
+
+    // Internal data structures
+    this.distances = []; // 2D array storing distances between cities
     this.initialHeuristics = []; // Heuristics based on initial distances
-    this.localHeuristics = []; // Adaptive heuristics, modified during search
+    this.localHeuristics = []; // Adaptable heuristics used by the search
 
-    this.isRunning = false;
-    this.improved = false; // Flag to track if an improvement was made in a pass
+    this.isRunning = true; // Flag to control the solver's execution loop
+    this.improvedInRound = true; // Flag to track if an improvement was made in the current round for a given K
 
-    // For detailed progress reporting
-    this.currentCityIndexInLoop = undefined;
-    this.totalCitiesInLoop = undefined;
-
-    // Bind self for postMessage context if needed, or ensure it's used correctly
-    this.postMessage = self.postMessage.bind(self);
-    self.onmessage = this.onmessage.bind(this);
+    this.statsUpdateInterval = null; // Interval ID for periodic stats updates
   }
 
   /**
-   * Handles messages from the main thread.
-   * @param {MessageEvent} event - The message event.
+   * Initializes the solver with city data and parameters.
+   * @param {object} data - The initialization data.
+   * @param {string} data.id - Identifier for this solver run.
+   * @param {Array<{x: number, y: number}>} data.cities - Array of city coordinates.
+   * @param {number} data.maxK - Maximum K value.
+   * @param {boolean} data.debug - Debug flag.
    */
-  onmessage(event) {
-    const payload = event.data;
+  initialize(data) {
+    this.id = data.id;
+    this.cities = data.cities;
+    this.numCities = this.cities.length;
+    this.maxK = data.maxK;
+    this.debug = data.debug;
 
-    if (payload.type === 'start') {
-      this.id = payload.id;
-      this.cities = payload.cities;
-      this.numCities = this.cities.length;
-      
-      // Defensively parse maxK, default to 0 if undefined or NaN
-      const parsedMaxK = parseInt(payload.maxK, 10);
-      this.maxK = isNaN(parsedMaxK) ? 0 : parsedMaxK;
-
-      this.debug = payload.debug;
-
-      this.resetState();
-      this.isRunning = true;
-
-      if (this.numCities > 0) {
-        this.initializeData();
-        this.solve();
-      } else {
-        // Handle case with no cities if necessary, e.g., send back an empty solution
-        this.postMessage({
-          type: 'solution',
-          id: this.id,
-          route: [],
-          distance: 0,
-          iteration: 0,
-          improvements: 0,
-          currentK: 0,
-        });
-        this.isRunning = false;
-      }
-    } else if (payload.type === 'stop') {
-      this.onStop();
-    }
-  }
-
-  /**
-   * Resets the solver's internal state for a new run.
-   */
-  resetState() {
+    // Reset all state variables for a new run
     this.bestRoute = [];
-    this.stats = {
-      iteration: 0,
-      improvements: 0,
-      currentK: 0,
-      bestDistance: Infinity,
-    };
+    this.bestDistance = Infinity;
+    this.iteration = 0;
+    this.improvements = 0;
     this.currentK = 0;
-    this.isRunning = false;
-    this.improved = false;
-    this.currentCityIndexInLoop = undefined;
-    this.totalCitiesInLoop = undefined;
-  }
+    this.currentCityIndexInLoop = 0;
+    this.totalCitiesInLoop = this.numCities; // Set once
+    this.isRunning = true;
+    this.improvedInRound = true;
 
-  /**
-   * Initializes data structures like distance matrix and heuristics.
-   */
-  initializeData() {
-    // Precompute distances between all pairs of cities
-    this.distances = this.cities.map((city1, i) =>
-      this.cities.map((city2, j) => (i === j ? 0 : this.calculateEuclideanDistance(city1, city2)))
-    );
-
-    // Initialize heuristics (sorted list of neighbors by distance)
-    this.initialHeuristics = this.cities.map((_, i) =>
-      this.cities
-        .map((_, j) => j)
-        .filter((j) => j !== i)
-        .sort((a, b) => this.distances[i][a] - this.distances[i][b])
-    );
-    this.localHeuristics = JSON.parse(JSON.stringify(this.initialHeuristics)); // Deep copy
-
-    // Calculate a simple lower bound for best possible distance
-    this.bestPossibleDistance = 0;
-    const minPossiblePerCity = [];
-    for (let i = 0; i < this.numCities; i++) {
-      if (this.initialHeuristics[i].length >= 2) {
-        const neighbor1 = this.initialHeuristics[i][0];
-        const neighbor2 = this.initialHeuristics[i][1];
-        minPossiblePerCity[i] = this.distances[i][neighbor1] + this.distances[i][neighbor2];
-        this.bestPossibleDistance += minPossiblePerCity[i];
-      } else if (this.initialHeuristics[i].length === 1) {
-        // If only one other city, distance is to it (doubled then halved)
-         const neighbor1 = this.initialHeuristics[i][0];
-         minPossiblePerCity[i] = this.distances[i][neighbor1] * 2; // Approximation
-         this.bestPossibleDistance += minPossiblePerCity[i];
-      }
+    if (this.numCities === 0) {
+        this.isRunning = false;
+        // Post a message back if there are no cities to process
+        self.postMessage({ type: 'error', id: this.id, message: 'No cities provided to solver.' });
+        return;
     }
-    this.bestPossibleDistance /= 2;
+
+    this.precomputeDistancesAndHeuristics();
+
+    // Start periodic stats updates
+    if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
+    this.statsUpdateInterval = setInterval(() => this.sendStats(), 1000);
+
+    if (this.debug) console.log(`[${this.id}] Worker initialized. MaxK: ${this.maxK}, Cities: ${this.numCities}`);
+    
+    // Start solving
+    setTimeout(() => this.solve(), 0);
   }
 
   /**
-   * Calculates the Euclidean distance between two cities, rounded to the nearest integer.
-   * @param {object} city1 - The first city {x, y}.
-   * @param {object} city2 - The second city {x, y}.
+   * Stops the solver.
+   */
+  stop() {
+    this.isRunning = false;
+    if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
+    if (this.debug) console.log(`[${this.id}] Worker stopped by request.`);
+  }
+
+  /**
+   * Calculates the Euclidean distance between two cities and rounds it.
+   * @param {object} city1 - The first city { x, y }.
+   * @param {object} city2 - The second city { x, y }.
    * @returns {number} The rounded Euclidean distance.
    */
   calculateEuclideanDistance(city1, city2) {
-    return Math.round(
-      Math.sqrt(Math.pow(city2.x - city1.x, 2) + Math.pow(city2.y - city1.y, 2))
-    );
+    return Math.round(Math.sqrt(Math.pow(city2.x - city1.x, 2) + Math.pow(city2.y - city1.y, 2)));
+  }
+
+  /**
+   * Precomputes the distance matrix and initial local heuristics.
+   */
+  precomputeDistancesAndHeuristics() {
+    this.distances = Array(this.numCities).fill(null).map(() => Array(this.numCities).fill(0));
+    this.initialHeuristics = Array(this.numCities).fill(null).map(() => []);
+    this.localHeuristics = Array(this.numCities).fill(null).map(() => []);
+
+    for (let i = 0; i < this.numCities; i++) {
+      for (let j = i + 1; j < this.numCities; j++) {
+        const dist = this.calculateEuclideanDistance(this.cities[i], this.cities[j]);
+        this.distances[i][j] = dist;
+        this.distances[j][i] = dist;
+      }
+    }
+
+    for (let i = 0; i < this.numCities; i++) {
+      const neighbors = [];
+      for (let j = 0; j < this.numCities; j++) {
+        if (i === j) continue;
+        neighbors.push({ index: j, distance: this.distances[i][j] });
+      }
+      neighbors.sort((a, b) => a.distance - b.distance);
+      this.initialHeuristics[i] = neighbors.map(n => n.index);
+      this.localHeuristics[i] = [...this.initialHeuristics[i]];
+    }
   }
 
   /**
    * Calculates the total distance of a given route.
-   * @param {number[]} route - An array of city indices.
+   * @param {number[]} route - An array of city indices representing the route.
    * @returns {number} The total distance of the route.
    */
-  calculateTotalRouteDistance(route) {
-    if (route.length < 2) return 0;
+  calculateTotalDistance(route) {
     let totalDistance = 0;
     for (let i = 0; i < route.length - 1; i++) {
       totalDistance += this.distances[route[i]][route[i + 1]];
     }
-    // Add distance from last city back to the first
-    totalDistance += this.distances[route[route.length - 1]][route[0]];
+    totalDistance += this.distances[route[route.length - 1]][route[0]]; // Return to start
     return totalDistance;
   }
 
   /**
-   * Shuffles an array in place.
-   * @param {Array} array - The array to shuffle.
-   */
-  shuffle(array) {
-    let currentIndex = array.length;
-    while (currentIndex !== 0) {
-      const randomIndex = Math.floor(Math.random() * currentIndex);
-      currentIndex--;
-      [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
-    }
-  }
-
-  /**
    * Sends statistics to the main thread.
-   * @param {number} [currentCityIndexInLoop] - Optional: current city index in the main solve loop.
-   * @param {number} [totalCitiesInLoop] - Optional: total cities in the main solve loop.
    */
-  sendStats(currentCityIndexInLoop, totalCitiesInLoop) {
-    this.currentCityIndexInLoop = currentCityIndexInLoop; // Can be undefined if called from checkRoute or end
-    this.totalCitiesInLoop = totalCitiesInLoop;   // Can be undefined
-    this.stats.currentK = this.currentK;          // Make sure reported K is the true K
-
-    this.postMessage({
+  sendStats(isLoopUpdate = false) {
+    self.postMessage({
       type: 'stats',
       id: this.id,
-      iteration: this.stats.iteration,
-      improvements: this.stats.improvements,
-      bestDistance: this.stats.bestDistance,
-      currentK: this.stats.currentK,
-      bestPossibleDistance: this.bestPossibleDistance,
-      currentCityIndexInLoop: this.currentCityIndexInLoop,
-      totalCitiesInLoop: this.totalCitiesInLoop,
+      iteration: this.iteration,
+      improvements: this.improvements,
+      bestDistance: this.bestDistance,
+      currentK: this.currentK,
+      currentCityIndexInLoop: isLoopUpdate ? this.currentCityIndexInLoop : undefined,
+      totalCitiesInLoop: isLoopUpdate ? this.totalCitiesInLoop : undefined,
     });
   }
 
   /**
-   * Updates the best route found so far and notifies the main thread.
-   * @param {number} routeDistance - The distance of the new best route.
-   * @param {number[]} currentRoute - The new best route.
+   * Updates the best route if a shorter one is found.
+   * @param {number} routeDistance - The distance of the current route.
+   * @param {number[]} currentRoute - The current route array.
    */
   updateBestRoute(routeDistance, currentRoute) {
-    this.improved = true; // Set flag that an improvement was made in this pass
-    this.stats.improvements += 1;
-    this.stats.bestDistance = routeDistance;
+    this.improvedInRound = true;
+    this.improvements++;
+    this.bestDistance = routeDistance;
     this.bestRoute = [...currentRoute];
+    this.adaptLocalHeuristics(this.bestRoute);
 
-    // Update local heuristics based on the new best route
-    this.updateLocalHeuristics(this.bestRoute);
-
-    // Send an 'improvement' message to the main thread
-    this.postMessage({
+    if (this.debug) console.log(`[${this.id}] Improvement #${this.improvements}: K=${this.currentK}, Dist=${this.bestDistance}`);
+    
+    // Send immediate improvement message
+    self.postMessage({
       type: 'improvement',
       id: this.id,
       route: this.bestRoute,
-      distance: this.stats.bestDistance,
-      iteration: this.stats.iteration,
-      improvements: this.stats.improvements,
-      currentK: this.stats.currentK,
-      currentCityIndexInLoop: this.currentCityIndexInLoop,
-      totalCitiesInLoop: this.totalCitiesInLoop,
+      distance: this.bestDistance,
+      iteration: this.iteration,
+      improvements: this.improvements,
+      currentK: this.currentK,
     });
+    // Also send general stats
+    this.sendStats();
   }
 
   /**
-   * Checks if a new route is better than the current best and updates if so.
-   * Also handles periodic stats updates.
+   * Checks if the current route is better than the best one found so far.
    * @param {number[]} currentRoute - The route to check.
    */
   checkRoute(currentRoute) {
-    this.stats.iteration += 1;
-    const routeDistance = this.calculateTotalRouteDistance(currentRoute);
-
-    if (routeDistance < this.stats.bestDistance) {
+    this.iteration++;
+    const routeDistance = this.calculateTotalDistance(currentRoute);
+    if (routeDistance < this.bestDistance) {
       this.updateBestRoute(routeDistance, currentRoute);
     }
 
-    // Send stats periodically.
-    // Consider if this is too frequent or should be less often,
-    // as stats are also sent per city in the main `solve` loop.
-    if (this.stats.iteration > 0 && (this.stats.iteration % 100000 === 0)) {
-      this.sendStats(this.currentCityIndexInLoop, this.totalCitiesInLoop);
-    }
-  }
-
-  /**
-   * Updates the local heuristics by promoting connections from the improved route.
-   * @param {number[]} improvedRoute - The route that led to an improvement.
-   */
-  updateLocalHeuristics(improvedRoute) {
-    if (improvedRoute.length < 2) return;
-    for (let i = 0; i < improvedRoute.length; i++) {
-      const city1 = improvedRoute[i];
-      const city2 = improvedRoute[(i + 1) % improvedRoute.length]; // Next city, wraps around
-
-      // For city1, if city2 is not already its top heuristic, make it so.
-      if (this.localHeuristics[city1][0] !== city2) {
-        this.localHeuristics[city1] = [
-          city2,
-          ...this.localHeuristics[city1].filter((c) => c !== city2),
-        ];
-      }
-      // For city2, if city1 is not already its top heuristic, make it so.
-      if (this.localHeuristics[city2][0] !== city1) {
-        this.localHeuristics[city2] = [
-          city1,
-          ...this.localHeuristics[city2].filter((c) => c !== city1),
-        ];
-      }
-    }
+    // // Send stats periodically even if no improvement (handled by interval now)
+    // if (this.iteration % 100000 === 0) { // Reduced frequency as interval handles it
+    //   this.sendStats();
+    // }
   }
 
   /**
    * The core recursive search function.
-   * @param {Set<number>} remainingCities - Set of city indices yet to be visited.
-   * @param {number[]} currentRoute - Array of city indices forming the current path.
-   * @param {number} alternativesLeft - Number of non-best heuristic choices allowed.
+   * @param {Set<number>} remainingCities - A Set of indices of cities yet to be visited.
+   * @param {number[]} currentRoute - The route built so far.
+   * @param {number} alternativesLeft - Number of non-heuristic choices allowed.
    */
   systematicAlternativesSearch(remainingCities, currentRoute, alternativesLeft) {
     if (!this.isRunning) return;
@@ -298,114 +217,158 @@ class SAS_Solver {
 
     const currentCity = currentRoute[currentRoute.length - 1];
     const heuristicOrder = this.localHeuristics[currentCity];
-    let validCitiesFound = 0; // Tracks how many valid heuristic choices we've tried from this node
+    let validCitiesFound = 0;
 
     for (let i = 0; i < heuristicOrder.length; i++) {
-      if (!this.isRunning) return;
-
       const nextCity = heuristicOrder[i];
       if (remainingCities.has(nextCity)) {
-        validCitiesFound++; // This is the 'k-th' valid choice we are making
-        
-        // If we've used more alternatives than allowed (validCitiesFound > 1 means we are not taking the 0-th alternative)
-        if ((validCitiesFound - 1) > alternativesLeft) {
-            break; // Stop exploring further alternatives from this city
-        }
-
+        validCitiesFound++;
         currentRoute.push(nextCity);
         remainingCities.delete(nextCity);
-
-        this.systematicAlternativesSearch(
-          remainingCities,
-          currentRoute,
-          alternativesLeft - (validCitiesFound - 1) // Alternatives consumed by this choice
-        );
-
+        
+        this.systematicAlternativesSearch(remainingCities, currentRoute, alternativesLeft - (validCitiesFound - 1));
+        
         remainingCities.add(nextCity); // Backtrack
-        currentRoute.pop();            // Backtrack
+        currentRoute.pop(); // Backtrack
+
+        if (validCitiesFound > alternativesLeft) { // Optimization: if we've used more alternatives than allowed for this path
+            break;
+        }
+      }
+       if (!this.isRunning) return; // Check frequently for stop signal
+    }
+  }
+
+  /**
+   * Adapts local heuristics based on an improved route.
+   * Connections in the new best route are prioritized.
+   * @param {number[]} improvedRoute - The new best route.
+   */
+  adaptLocalHeuristics(improvedRoute) {
+    for (let i = 0; i < improvedRoute.length; i++) {
+      const city1 = improvedRoute[i];
+      const city2 = improvedRoute[(i + 1) % this.numCities]; // Next city in cycle
+
+      // For city1, prioritize city2
+      let currentHeuristicCity1 = this.localHeuristics[city1];
+      if (currentHeuristicCity1[0] !== city2) {
+        this.localHeuristics[city1] = [city2, ...currentHeuristicCity1.filter(c => c !== city2)];
+      }
+
+      // For city2, prioritize city1
+      let currentHeuristicCity2 = this.localHeuristics[city2];
+      if (currentHeuristicCity2[0] !== city1) {
+         this.localHeuristics[city2] = [city1, ...currentHeuristicCity2.filter(c => c !== city1)];
       }
     }
   }
-
+  
   /**
-   * Main solving loop. Iterates through K values and manages search passes.
+   * Shuffles an array in place.
+   * @param {Array} array - The array to shuffle.
    */
-  async solve() {
-    if (this.numCities === 0) {
-        this.isRunning = false;
-        this.postMessage({ type: 'solution', id: this.id, route: [], distance: 0, iteration: 0, improvements: 0, currentK: 0 });
-        return;
+  shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
     }
-
-    // Initial greedy solution (K=0)
-    // Often the first improvement comes from the first full pass with K=0
-    this.currentK = 0; // Controller for K
-    this.stats.currentK = this.currentK; // Set initial reported K
-
-    // Loop for K, from 0 up to maxK
-    while (this.isRunning && this.currentK <= this.maxK) {
-      this.stats.currentK = this.currentK; // Update reported K for this K-level
-      this.improved = true; // Assume improvement for this K value to start the inner loop
-      let round = 0; // Counter for rounds within the same K
-
-      // Inner loop: iterate while improvements are found for the current K
-      while (this.isRunning && this.improved) {
-        this.improved = false; // Reset 'improved' flag for this new pass/round
-        round++;
-        
-        const order = [...Array(this.numCities).keys()];
-        this.shuffle(order); // Randomize order of starting cities for this pass
-
-        // Loop through each city as a potential starting point for the current K and round
-        for (let i = 0; i < this.numCities; i++) {
-          if (!this.isRunning) break; // Check if stop was requested
-
-          // Send stats for the current city in the loop
-          this.sendStats(i + 1, this.numCities);
-
-          const startCity = order[i];
-          const remainingCities = new Set(
-            [...Array(this.numCities).keys()].filter((j) => j !== startCity)
-          );
-          this.systematicAlternativesSearch(
-            remainingCities,
-            [startCity],
-            this.currentK // Pass the current K
-          );
-        }
-        if (!this.isRunning) break; // Check if stop was requested during the city loop
-      } // End of inner while loop (no more improvements for current K)
-
-      if (!this.isRunning) break; // If master instructed to stop during K processing
-
-      this.currentK++; // Increment K to explore deeper alternatives
-    } // End of outer while loop for K
-
-    // All K values explored up to maxK, or stopped early
-    if (this.isRunning) {
-      this.sendStats(); // Send final stats before concluding
-      this.postMessage({
-        type: 'solution',
-        id: this.id,
-        route: this.bestRoute,
-        distance: this.stats.bestDistance,
-        iteration: this.stats.iteration,
-        improvements: this.stats.improvements,
-        currentK: this.stats.currentK, 
-      });
-    }
-    this.isRunning = false; // Ensure worker state is set to not running
   }
 
   /**
-   * Handles a 'stop' message from the main thread.
+   * The main solving loop. Iterates through K values and starting cities.
    */
-  onStop() {
-    this.isRunning = false;
-    if (this.debug) console.log(`Worker ${this.id} received stop command.`);
+  solve() {
+    if (!this.isRunning) {
+      if (this.debug) console.log(`[${this.id}] Solve called but isRunning is false. Exiting.`);
+      this.sendFinalSolution();
+      return;
+    }
+    
+    // Initial greedy solution (K=0) if no route exists yet
+    if (this.bestRoute.length === 0 && this.numCities > 0) {
+        this.currentK = 0;
+        this.currentCityIndexInLoop = 1; // Indicate start of loop
+        this.sendStats(true); // Send initial K state
+
+        const initialStartCity = 0;
+        const initialRemaining = new Set(this.cities.map((_, idx) => idx).filter(j => j !== initialStartCity));
+        this.systematicAlternativesSearch(initialRemaining, [initialStartCity], 0);
+        if (!this.isRunning) { this.sendFinalSolution(); return; }
+    }
+
+    this.improvedInRound = true; // Assume improvement to start the K loop
+    let kIteration = this.currentK; // Start from currentK (usually 0 or 1)
+
+    // Main loop: iterate K and then iterate starting cities
+    while (this.improvedInRound && kIteration <= this.maxK && this.isRunning) {
+      this.currentK = kIteration;
+      this.improvedInRound = false; // Reset for this K value
+
+      if (this.debug) console.log(`[${this.id}] Starting K = ${this.currentK}`);
+      
+      // Create a shuffled order of starting cities
+      let cityOrder = Array.from({ length: this.numCities }, (_, i) => i);
+      this.shuffleArray(cityOrder);
+
+      for (let i = 0; i < this.numCities; i++) {
+        if (!this.isRunning) break;
+        
+        const startCity = cityOrder[i];
+        this.currentCityIndexInLoop = i + 1; // 1-indexed for display
+        this.sendStats(true); // Send progress within the city loop
+
+        if (this.debug && (i % 20 === 0 || i === this.numCities -1) ) { // Log progress occasionally
+            console.log(`[${this.id}] K=${this.currentK}, Round for city ${i+1}/${this.numCities}. Best: ${this.bestDistance.toFixed(0)}`);
+        }
+        
+        let remainingCities = new Set(this.cities.map((_, index) => index).filter(j => j !== startCity));
+        this.systematicAlternativesSearch(remainingCities, [startCity], this.currentK);
+      }
+      
+      if (!this.improvedInRound && this.isRunning) { // If no improvement in this K round, increment K
+         kIteration++;
+      }
+      // If there was an improvement, improvedInRound is true, so the while loop continues with the same K
+      // or resets K if we want a different strategy (e.g. K=0 again, but current keeps K)
+    }
+    
+    if (this.isRunning) { // If loop finished naturally (not stopped)
+        if (this.debug) console.log(`[${this.id}] Solve loop finished. MaxK reached or no further improvements. Iterations: ${this.iteration.toLocaleString()}`);
+    }
+    this.sendFinalSolution();
+  }
+
+  /**
+   * Sends the final solution message to the main thread.
+   */
+  sendFinalSolution() {
+    if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
+    this.statsUpdateInterval = null;
+
+    // Ensure a final stats update is sent before the solution
+    this.currentCityIndexInLoop = 0; // Clear city loop progress
+    this.sendStats(); 
+
+    self.postMessage({
+      type: 'solution',
+      id: this.id,
+      route: this.bestRoute,
+      distance: this.bestDistance,
+      iteration: this.iteration,
+      improvements: this.improvements,
+      currentK: this.currentK, // The K at which the process concluded
+    });
+     if (this.debug) console.log(`[${this.id}] Final solution sent.`);
   }
 }
 
-// Instantiate the solver when the worker is created.
-// The actual start command will come via onmessage.
-new SAS_Solver();
+// --- Worker Message Handling ---
+const solverInstance = new SAS_Solver();
+
+self.onmessage = function(e) {
+  if (e.data.type === 'start') {
+    solverInstance.initialize(e.data);
+  } else if (e.data.type === 'stop') {
+    solverInstance.stop();
+  }
+};
