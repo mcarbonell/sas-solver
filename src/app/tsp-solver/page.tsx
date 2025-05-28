@@ -29,6 +29,8 @@ interface SolverStats {
   improvements: number;
   currentK: number;
   bestDistance: number;
+  currentCityIndexInLoop?: number;
+  totalCitiesInLoop?: number;
 }
 
 interface BatchRunResult {
@@ -138,6 +140,8 @@ export default function TspSolverPage() {
     improvements: 0,
     currentK: 0,
     bestDistance: Infinity,
+    currentCityIndexInLoop: undefined,
+    totalCitiesInLoop: undefined,
   });
 
   const [maxK, setMaxK] = useState(3);
@@ -147,7 +151,7 @@ export default function TspSolverPage() {
   const workerRef = useRef<Worker | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const solverStartTimeRef = useRef<number>(0); // For main display timer
+  const solverStartTimeRef = useRef<number>(0); 
   const [currentElapsedTime, setCurrentElapsedTime] = useState<number>(0); 
   const [formattedTime, setFormattedTime] = useState("00:00:00");
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -158,7 +162,7 @@ export default function TspSolverPage() {
   // Batch execution states
   const [numberOfRuns, setNumberOfRuns] = useState(10);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
-  const isBatchRunIntentActiveRef = useRef(false); // Ref to control batch continuation intent
+  const isBatchRunIntentActiveRef = useRef(false); 
   const [currentBatchRunNumber, setCurrentBatchRunNumber] = useState(0);
   const [batchRunResults, setBatchRunResults] = useState<BatchRunResult[]>([]);
   const [aggregatedBatchStats, setAggregatedBatchStats] = useState<AggregatedBatchStats | null>(null);
@@ -221,7 +225,14 @@ export default function TspSolverPage() {
   };
   
   const resetSolverState = (fullResetForNewInstance = false) => {
-    setSolverStats({ iteration: 0, improvements: 0, currentK: 0, bestDistance: Infinity });
+    setSolverStats({ 
+        iteration: 0, 
+        improvements: 0, 
+        currentK: 0, 
+        bestDistance: Infinity,
+        currentCityIndexInLoop: undefined,
+        totalCitiesInLoop: undefined 
+    });
     setBestRoute([]);
 
     if (fullResetForNewInstance) {
@@ -237,19 +248,19 @@ export default function TspSolverPage() {
 
 
   // Effect for loading city data when selectedInstance or customInstanceData changes
-  useEffect(() => {
+   useEffect(() => {
     const loadInstanceData = async () => {
       if (workerRef.current) {
-        workerRef.current.terminate(); // Terminate existing worker
+        workerRef.current.terminate(); 
         workerRef.current = null;
       }
-      // Stop any ongoing batch or single run when instance changes
+      
       isBatchRunIntentActiveRef.current = false;
       setIsSolverRunning(false);
       setIsBatchRunning(false);
       setBatchEtrFormatted("");
       
-      resetSolverState(true); // Full reset for new instance, including timer display
+      resetSolverState(true); 
 
       let newCities: City[] = [];
       let errorMsg: string | null = null;
@@ -292,12 +303,13 @@ export default function TspSolverPage() {
          newCities = []; 
       }
       setCities(newCities);
+      setSolverStats(prev => ({...prev, totalCitiesInLoop: newCities.length}));
       setErrorMessage(errorMsg);
     };
 
     loadInstanceData();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedInstance, customInstanceData]); // optimalSolutionsData removed to prevent batch stop
+  }, [selectedInstance, customInstanceData]);
 
 
   // Effect for updating currentOptimalDistance based on loaded cities and optimal solutions data
@@ -398,13 +410,13 @@ export default function TspSolverPage() {
           workerRef.current = null;
         }
 
-        const localWorker = new Worker('/sas-solver.worker.js'); // Use the refactored worker
+        const localWorker = new Worker('/sas-solver.worker.js'); 
         workerRef.current = localWorker; 
 
         const runStartTime = Date.now();
 
         localWorker.onmessage = (e) => {
-          const { type, iteration, improvements, bestDistance, currentK, route, distance: solutionDistance } = e.data;
+          const { type, iteration, improvements, bestDistance, currentK, route, distance: solutionDistance, currentCityIndexInLoop, totalCitiesInLoop } = e.data;
 
           if (type === 'stats' || type === 'improvement' || type === 'solution') {
             setSolverStats(prevStats => ({
@@ -412,7 +424,9 @@ export default function TspSolverPage() {
               iteration: iteration !== undefined ? iteration : prevStats.iteration,
               improvements: improvements !== undefined ? improvements : prevStats.improvements,
               currentK: currentK !== undefined ? currentK : prevStats.currentK,
-              bestDistance: solutionDistance !== undefined ? solutionDistance : (bestDistance !== undefined ? bestDistance : prevStats.bestDistance)
+              bestDistance: solutionDistance !== undefined ? solutionDistance : (bestDistance !== undefined ? bestDistance : prevStats.bestDistance),
+              currentCityIndexInLoop: currentCityIndexInLoop !== undefined ? currentCityIndexInLoop : prevStats.currentCityIndexInLoop,
+              totalCitiesInLoop: totalCitiesInLoop !== undefined ? totalCitiesInLoop : prevStats.totalCitiesInLoop,
             }));
             if (route) {
               setBestRoute(route);
@@ -497,7 +511,6 @@ export default function TspSolverPage() {
   const handleStopSolver = () => {
     if (workerRef.current) {
       workerRef.current.postMessage({ type: 'stop', id: selectedInstance || 'custom' });
-      // Give worker a moment to process stop message before terminating
       setTimeout(() => {
         if (workerRef.current) {
           workerRef.current.terminate();
@@ -561,6 +574,8 @@ export default function TspSolverPage() {
  const handleRunBatchSolver = async () => {
     if (isBatchRunning || cities.length === 0 || isSolverRunning || numberOfRuns <= 0) return;
 
+    const actualBatchStartTime = Date.now(); 
+    
     setIsBatchRunning(true);
     isBatchRunIntentActiveRef.current = true; 
     setErrorMessage(null);
@@ -578,13 +593,11 @@ export default function TspSolverPage() {
     let totalBatchProcessingTime = 0;
     const currentLoopNumberOfRuns = numberOfRuns; 
 
-    const actualBatchStartTime = Date.now(); 
     startTimer(); 
 
     try {
         for (let i = 1; i <= currentLoopNumberOfRuns; i++) {
             if (!isBatchRunIntentActiveRef.current) { 
-                // setErrorMessage("Batch run stopped by user."); // Removed for now
                 break; 
             }
 
@@ -603,7 +616,7 @@ export default function TspSolverPage() {
                 if (runsCompleted > 0 && runsRemaining > 0 && totalBatchProcessingTime > 0) {
                     const avgTimePerIndividualRun = totalBatchProcessingTime / runsCompleted;
                     const etrMs = runsRemaining * avgTimePerIndividualRun;
-                    setBatchEtrFormatted(` (ETR: ${formatTime(etrMs)})`);
+                    setBatchEtrFormatted(`${formatTime(etrMs)}`);
                 } else {
                     setBatchEtrFormatted("");
                 }
@@ -615,10 +628,8 @@ export default function TspSolverPage() {
         }
     } finally {
         stopTimer(); 
-        isBatchRunIntentActiveRef.current = false; 
-        setIsBatchRunning(false); 
-        setCurrentBatchRunNumber(0); 
-        setBatchEtrFormatted(""); 
+        
+        const finalBatchDuration = Date.now() - actualBatchStartTime; 
 
         if (resultsCollector.length > 0) {
             const totalDistance = resultsCollector.reduce((sum, r) => sum + r.distance, 0);
@@ -651,8 +662,6 @@ export default function TspSolverPage() {
                 }
             }
             
-            const finalBatchDuration = Date.now() - actualBatchStartTime; 
-
             setAggregatedBatchStats({
                 numberOfRuns: resultsCollector.length,
                 minDistance,
@@ -666,6 +675,10 @@ export default function TspSolverPage() {
             });
             setHistogramData(prepareHistogramData(resultsCollector));
         }
+        isBatchRunIntentActiveRef.current = false; 
+        setIsBatchRunning(false); 
+        setCurrentBatchRunNumber(0); 
+        setBatchEtrFormatted(""); 
     }
 };
 
@@ -689,6 +702,10 @@ export default function TspSolverPage() {
 
   const canRun = !isLoadingData && cities.length > 0;
   const chartConfigSolutions = { solutions: { label: "Solutions", color: "hsl(var(--chart-1))" } };
+
+  const currentKDisplay = solverStats.currentCityIndexInLoop && solverStats.totalCitiesInLoop 
+    ? `${solverStats.currentK} (City ${solverStats.currentCityIndexInLoop}/${solverStats.totalCitiesInLoop})` 
+    : `${solverStats.currentK}`;
 
 
   return (
@@ -791,7 +808,7 @@ export default function TspSolverPage() {
                 {solverStats.bestDistance !== Infinity ? `SAS path length: ${solverStats.bestDistance.toFixed(0)}` : cities.length > 0 ? "TSP instance cities. Ready to solve." : "Awaiting data or selection."}
                 {currentOptimalDistance && ` Optimal: ${currentOptimalDistance}.`}
                  {approximationRatio && ` Ratio: ${approximationRatio.toFixed(4)}.`}
-                 {isBatchRunning && batchEtrFormatted && ` (Run ${currentBatchRunNumber} of ${numberOfRuns}${batchEtrFormatted})`}
+                 {isBatchRunning && batchEtrFormatted && ` (Run ${currentBatchRunNumber} of ${numberOfRuns} - ETR: ${batchEtrFormatted})`}
                  {isBatchRunning && !batchEtrFormatted && ` (Run ${currentBatchRunNumber} of ${numberOfRuns})`}
               </CardDescription>
             </CardHeader>
@@ -851,7 +868,7 @@ export default function TspSolverPage() {
                       <FileCog className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent className="pb-3 px-4">
-                      <div className="text-xl font-bold">{solverStats.currentK}</div>
+                      <div className="text-xl font-bold">{currentKDisplay}</div>
                     </CardContent>
                   </Card>
                   <Card className="bg-muted/30">
@@ -899,7 +916,7 @@ export default function TspSolverPage() {
                 <div className="flex flex-col items-center justify-center my-6">
                     <Activity className="h-12 w-12 text-primary animate-spin mb-3" />
                     <p className="text-muted-foreground text-md">
-                        Batch analysis in progress... Run {currentBatchRunNumber} of {numberOfRuns}{batchEtrFormatted}
+                        Batch analysis in progress... Run {currentBatchRunNumber} of {numberOfRuns}{batchEtrFormatted && ` (ETR: ${batchEtrFormatted})`}
                     </p>
                 </div>
               )}
